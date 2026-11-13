@@ -55,6 +55,16 @@ export default function SignalPanel({ analysis }: { analysis: Analysis }) {
         />
       </div>
 
+      <div
+        className={`mt-3 rounded border px-3 py-2 text-xs leading-relaxed ${
+          plan.action.kind === 'HOLD' ? 'border-warn/40 bg-warn/10 text-warn' : 'border-gold/40 bg-gold/10 text-gold-soft'
+        }`}
+      >
+        <span className="font-semibold tracking-wider">ACTION · {plan.action.label}</span>
+        <span className="mx-1.5 opacity-50">|</span>
+        {plan.action.note}
+      </div>
+
       <div className="mt-4 grid grid-cols-2 gap-2">
         <PriceCell label="ENTRY" value={plan.entry} color="border-gold" />
         <PriceCell label="STOP LOSS" value={plan.sl} color="border-down" />

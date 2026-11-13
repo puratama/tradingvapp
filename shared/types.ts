@@ -59,6 +59,18 @@ export interface Pattern {
   note: string;
 }
 
+/** Order type to place at the broker, or HOLD when no order should be placed. */
+export type ActionKind = 'BUY_LIMIT' | 'BUY_STOP' | 'SELL_LIMIT' | 'SELL_STOP' | 'MARKET' | 'HOLD';
+
+/** Execution instruction for a trade plan. */
+export interface PlanAction {
+  kind: ActionKind;
+  /** Short label, e.g. "Buy Limit". */
+  label: string;
+  /** Indonesian instruction: what to place and when it fills. */
+  note: string;
+}
+
 export interface TradePlan {
   verdict: 'BUY' | 'SELL' | 'WAIT';
   confidence: number;
@@ -71,6 +83,8 @@ export interface TradePlan {
   rr2: number | null;
   /** ATR-based stop distance in USD (also risk per 1.0 lot). */
   stopDistance: number | null;
+  /** Execution instruction: order type to place + Indonesian keterangan. */
+  action: PlanAction;
 }
 
 export interface NewsEvent {

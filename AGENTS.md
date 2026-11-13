@@ -29,20 +29,20 @@ Nama tool bridge sengaja kompatibel dengan MCP resmi TradingView
 Mesin analisis (`server/analysis/signal.ts`) menggabungkan: snapshot tren per TF
 (EMA20/50/200, RSI14, MACD, ATR14, struktur swing), bias berbobot
 D1:H4:H1:M15:M5 = 3:3:2:1:1, skor konfluensi (tren, momentum, pullback vs EMA20 H1,
-pola candle, rating TradingView, level struktur), dan gate berita (high-impact
-±1 jam → verdict dipaksa `WAIT`).
+pola candle, rating TradingView, level struktur), dan gate berita (event high-impact
+dari −5 menit sampai +1 jam → verdict dipaksa `WAIT`).
 
 ## Key Directories
 
-| Path | Purpose |
-| --- | --- |
-| `shared/` | Tipe domain (`types.ts`) + indikator murni (`indicators.ts`) — dipakai server & client |
-| `server/` | Express REST API, MCP client, engine analisis, enrichment berita |
-| `server/analysis/` | `indicators` (re-export dari shared), `structure`, `patterns`, `signal` |
-| `server/news/enrich.ts` | Mapping judul event → dampak ke XAUUSD (bahasa Indonesia) |
-| `mcp-bridge/` | MCP server stdio; `forexfactory.ts` = fetch feed kalender |
-| `client/src/components/` | `Chart`, `SignalPanel`, `MtfTable`, `RiskCalculator`, `NewsPanel` |
-| `client/src/lib/` | `api.ts` (hooks polling), `format.ts` (WIB, angka, countdown) |
+|Path|Purpose|
+|---|---|
+|`shared/`|Tipe domain (`types.ts`) + indikator murni (`indicators.ts`) — dipakai server & client|
+|`server/`|Express REST API, MCP client, engine analisis, enrichment berita|
+|`server/analysis/`|`indicators` (re-export dari shared), `structure`, `patterns`, `signal`|
+|`server/news/enrich.ts`|Mapping judul event → dampak ke XAUUSD (bahasa Indonesia)|
+|`mcp-bridge/`|MCP server stdio; `forexfactory.ts` = fetch feed kalender|
+|`client/src/components/`|`Chart`, `SignalPanel`, `MtfTable`, `RiskCalculator`, `NewsPanel`|
+|`client/src/lib/`|`api.ts` (hooks polling), `format.ts` (WIB, angka, countdown)|
 
 ## Development Commands
 
@@ -84,9 +84,8 @@ Env vars: `PORT` (default `3001`, bind `127.0.0.1` saja), `XAUUSD_SYMBOL`
   toleran per-URL gagal via `allSettled`); tool bridge bersifat `async` dan selalu
   menangkap exception menjadi hasil error, tidak crash proses.
 - **State management**: hooks sederhana di `client/src/lib/api.ts`, tanpa Redux/
-  React Query; quote & analisis realtime via SSE `/api/stream` (satu `EventSource`
-  bersama, hook `useStream`), candle polling 20 dtk (bar berjalan dipatch live dari
-  quote stream), berita 5 menit, health 60 dtk.
+  React Query; SSE `/api/stream` untuk quote & analisis realtime, polling untuk
+  candles/berita/health.
 - **Naming**: file komponen PascalCase (`SignalPanel.tsx`), modul logika camelCase
   (`forexfactory.ts`), konstanta domain UPPER_SNAKE (`TF_WEIGHT`, `CALENDAR_CURRENCIES`),
   tipe domain PascalCase. `TF` = `'M5'|'M15'|'H1'|'H4'|'D1'`; interval bridge memakai
@@ -114,7 +113,9 @@ Env vars: `PORT` (default `3001`, bind `127.0.0.1` saja), `XAUUSD_SYMBOL`
   `StdioClientTransport`, `node --import tsx mcp-bridge/index.ts`) + cache TTL.
 - `server/analysis/signal.ts` — `computeAnalysis()`: keputusan entry, ambang skor
   (≥3 → BUY/SELL, =2 → trade kecil, <2 → WAIT), `confidence = 50 + 6.5×skor`
-  (diklamp [10, 95]), gate berita (high-impact ±1 jam → verdict dipaksa WAIT).
+  (diklamp [10, 95]), gate berita (high-impact −5 mnt…+1 jam → verdict dipaksa WAIT).
+  Tiap plan memuat `action` — instruksi order (Buy/Sell Limit/Stop, Market, Tunggu) +
+  keterangan eksekusi bahasa Indonesia (`describeAction`, override HOLD saat verdict WAIT).
 - `mcp-bridge/index.ts` — registrasi 5 tool MCP; konversi interval → timeframe
   `@mathieuc/tradingview` (`INTERVAL_MAP`).
 - `shared/indicators.ts` — SMA/EMA/RSI/MACD/ATR/Bollinger murni (null-padded).
@@ -122,7 +123,7 @@ Env vars: `PORT` (default `3001`, bind `127.0.0.1` saja), `XAUUSD_SYMBOL`
   (`addSeries(CandlestickSeries)`, `createSeriesMarkers`, price line ENTRY/SL/TP).
 - `vite.config.ts` — root `client/`, plugin react + tailwindcss, proxy `/api`.
 - `client/src/index.css` — token tema Tailwind v4 (`@theme`: `ink-*`, `gold`, `up`,
-  `down`, `warn`; font `Cinzel`/`IBM Plex Sans`/`IBM Plex Mono`).
+  `down`, `warn`; font heading `Poppins`, body `IBM Plex Sans`, angka `IBM Plex Mono`).
 
 ## Runtime & Tooling Preferences
 

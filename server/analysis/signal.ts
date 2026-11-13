@@ -12,6 +12,7 @@ import type {
   Level,
   NewsEvent,
   Pattern,
+  PlanAction,
   Quote,
   TF,
   TradePlan,
@@ -75,6 +76,46 @@ function addWarn(ctx: ScoreContext, points: number, warning: string): void {
   ctx.warnings.push(warning);
 }
 
+/** Order-type instruction derived from direction and entry vs current price. */
+function describeAction(direction: 'BUY' | 'SELL', entry: number, priceNow: number): PlanAction {
+  // Entries at the reference price execute at market; limit/stop entries are at
+  // least 0.6 ATR (>= 0.06) away from it.
+  if (Math.abs(entry - priceNow) < 0.02) {
+    return {
+      kind: 'MARKET',
+      label: 'Market Order',
+      note:
+        direction === 'BUY'
+          ? 'Eksekusi beli langsung di harga berjalan (market order), tanpa menunggu level tertentu — pasang SL dan TP segera setelah posisi terbuka.'
+          : 'Eksekusi jual langsung di harga berjalan (market order), tanpa menunggu level tertentu — pasang SL dan TP segera setelah posisi terbuka.',
+    };
+  }
+  if (direction === 'BUY') {
+    return entry < priceNow
+      ? {
+          kind: 'BUY_LIMIT',
+          label: 'Buy Limit',
+          note: 'Order beli tertunda di level ENTRY (di bawah harga berjalan) — terisi otomatis saat harga turun menyentuh ENTRY; cocok untuk masuk saat pullback.',
+        }
+      : {
+          kind: 'BUY_STOP',
+          label: 'Buy Stop',
+          note: 'Order beli tertunda di level ENTRY (di atas harga berjalan) — terisi otomatis saat harga naik menembus ENTRY; cocok untuk menangkap breakout / lanjutan tren.',
+        };
+  }
+  return entry > priceNow
+    ? {
+        kind: 'SELL_LIMIT',
+        label: 'Sell Limit',
+        note: 'Order jual tertunda di level ENTRY (di atas harga berjalan) — terisi otomatis saat harga naik menyentuh ENTRY; cocok untuk menjual di area resistance.',
+      }
+    : {
+        kind: 'SELL_STOP',
+        label: 'Sell Stop',
+        note: 'Order jual tertunda di level ENTRY (di bawah harga berjalan) — terisi otomatis saat harga turun menembus ENTRY; cocok untuk menangkap breakdown / lanjutan tren.',
+      };
+}
+
 function planPrices(direction: 'BUY' | 'SELL', snap: TfSnapshot, candles: Candle[]): TradePlan {
   const atrH1 = Math.max(snap.atr, 0.1);
   const closed = candles.slice(0, -1);
@@ -130,6 +171,7 @@ function planPrices(direction: 'BUY' | 'SELL', snap: TfSnapshot, candles: Candle
     rr1: 1.5,
     rr2: 2.5,
     stopDistance: round2(risk),
+    action: describeAction(direction, entry, priceNow),
   };
 }
 
@@ -180,6 +222,11 @@ export function computeAnalysis(input: SignalInput): Analysis {
       rr1: null,
       rr2: null,
       stopDistance: null,
+      action: {
+        kind: 'HOLD',
+        label: 'Tunggu',
+        note: 'Tidak ada aksi yang perlu dilakukan — tunggu konfirmasi arah yang lebih jelas sebelum menyusun rencana entry.',
+      },
     };
     warnings.push('Tunggu breakout struktur atau pullback yang lebih jelas sebelum entry.');
     return {
@@ -286,6 +333,18 @@ export function computeAnalysis(input: SignalInput): Analysis {
     plan.verdict = 'WAIT';
     plan.setupType = `TERTUNDA (news high-impact) — ${plan.setupType}`;
     warnings.push('Verdict diturunkan ke WAIT karena jendela news high-impact.');
+  }
+
+  if (plan.verdict === 'WAIT' && plan.action.kind !== 'HOLD') {
+    const prepared = plan.action.label;
+    plan.action = {
+      kind: 'HOLD',
+      label: 'Tunggu',
+      note:
+        newsRisk.level === 'high'
+          ? `Jangan pasang order dulu — news high-impact sedang dekat; rencana ${prepared} hanya berlaku setelah jendela rilis lewat.`
+          : `Jangan pasang order dulu — konfirmasi belum cukup; rencana ${prepared} di level ENTRY hanya skenario pengamatan.`,
+    };
   }
 
   // Human-readable plan rationale
