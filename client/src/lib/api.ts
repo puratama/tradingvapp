@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Analysis, Candle, NewsEvent, Quote, TF } from '../../../shared/types';
+import type { Analysis, Candle, NewsEvent, Quote, TF, TradeRecord } from '../../../shared/types';
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -42,7 +42,7 @@ function usePoll<T>(url: string, intervalMs: number): PollState<T> {
 }
 
 // ---- Realtime stream: one shared SSE connection feeding quote + analysis ----
-type StreamEvent = 'quote' | 'analysis' | 'error';
+type StreamEvent = 'quote' | 'analysis' | 'trades' | 'error';
 
 let es: EventSource | null = null;
 const streamListeners = new Set<(event: StreamEvent, payload: unknown) => void>();
@@ -54,14 +54,14 @@ function emitStream(event: StreamEvent, payload: unknown): void {
 function ensureStream(): void {
   if (es) return;
   es = new EventSource('/api/stream');
-  for (const event of ['quote', 'analysis'] as const) {
+  for (const event of ['quote', 'analysis', 'trades'] as const) {
     es.addEventListener(event, (ev) => emitStream(event, JSON.parse((ev as MessageEvent<string>).data)));
   }
   // EventSource reconnects on its own; the server re-sends a snapshot per connection.
   es.onerror = () => emitStream('error', null);
 }
 
-function useStream<T>(event: 'quote' | 'analysis', refreshUrl: string): PollState<T> {
+function useStream<T>(event: 'quote' | 'analysis' | 'trades', refreshUrl: string): PollState<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -107,6 +107,10 @@ export function useAnalysis() {
 
 export function useQuote() {
   return useStream<Quote>('quote', '/api/quote');
+}
+
+export function useTrades() {
+  return useStream<TradeRecord[]>('trades', '/api/trades');
 }
 
 export function useCandles(tf: TF) {

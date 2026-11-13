@@ -9,7 +9,7 @@
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { getCandles, getQuote, getTechnicalAnalysis, searchMarkets } from '@mathieuc/tradingview';
+import { TradingViewClient, getCandles, getQuote, getTechnicalAnalysis, searchMarkets, watchQuotes } from '@mathieuc/tradingview';
 import { z } from 'zod';
 import { fetchEconomicCalendar } from './forexfactory.js';
 
@@ -38,6 +38,14 @@ function errorResult(err: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify({ error: message }) }], isError: true };
 }
 
+// One shared websocket for every TradingView call: without `client` each call
+// opens and closes its own connection and the churn trips TradingView's 429.
+let tvClient: TradingViewClient | null = null;
+function getTvClient(): TradingViewClient {
+  if (!tvClient || tvClient.isClosed) tvClient = new TradingViewClient();
+  return tvClient;
+}
+
 server.registerTool(
   'get_ohlcv',
   {
@@ -56,7 +64,7 @@ server.registerTool(
   async ({ symbol, interval, count }) => {
     try {
       const timeframe = INTERVAL_MAP[interval] ?? interval;
-      const candles = await getCandles({ symbol, timeframe, count });
+      const candles = await getCandles({ symbol, timeframe, count, client: getTvClient() });
       return jsonResult({ symbol, interval, bars: candles });
     } catch (err) {
       return errorResult(err);
@@ -74,8 +82,42 @@ server.registerTool(
   },
   async ({ symbol }) => {
     try {
-      return jsonResult({ symbol, ...(await getQuote(symbol)) });
+      return jsonResult({ symbol, ...(await getQuote({ symbol, client: getTvClient() })) });
     } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+/** Live quote watchers per symbol; tick updates go out as MCP notifications. */
+const quoteWatchers = new Set<string>();
+
+server.registerTool(
+  'subscribe_quote',
+  {
+    title: 'Live quote stream',
+    description:
+      'Start streaming live quote updates for a symbol. Each update is sent as an MCP notification "notifications/quote" with params { symbol, quote }. Idempotent.',
+    inputSchema: { symbol: z.string().describe('Exchange-qualified symbol, e.g. OANDA:XAUUSD') },
+  },
+  async ({ symbol }) => {
+    try {
+      if (quoteWatchers.has(symbol)) return jsonResult({ symbol, subscribed: true, already: true });
+      quoteWatchers.add(symbol);
+      await watchQuotes({ symbols: [symbol], client: getTvClient() }, {
+        onData(sym, quote) {
+          void server.server
+            .notification({ method: 'notifications/quote', params: { symbol: sym, quote } })
+            .catch((err) => console.error('[bridge] quote notify:', err instanceof Error ? err.message : err));
+        },
+        onError(err) {
+          console.error('[bridge] quote watch:', err instanceof Error ? err.message : err);
+          quoteWatchers.delete(symbol);
+        },
+      });
+      return jsonResult({ symbol, subscribed: true });
+    } catch (err) {
+      quoteWatchers.delete(symbol);
       return errorResult(err);
     }
   },

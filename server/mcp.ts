@@ -7,6 +7,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
 
 // Short TTLs for market data: the stream ticker drives freshness, the cache
 // only dedupes concurrent/rapid calls (REST + SSE snapshot + analysis recompute).
@@ -35,6 +36,9 @@ async function connect(): Promise<Client> {
   });
   const client = new Client({ name: 'xauusd-decision-desk', version: '0.1.0' });
   await client.connect(transport);
+  client.setNotificationHandler(QuotePushSchema, (n) => {
+    for (const cb of quotePushListeners) cb(n.params);
+  });
   console.error('[mcp] tradingview-lite bridge connected');
   return client;
 }
@@ -76,6 +80,26 @@ export async function callTool<T>(name: string, args: Record<string, unknown>): 
   cache.set(key, { value, expires: Date.now() + (TTL_MS[name] ?? 30_000) });
   value.catch(() => cache.delete(key));
   return { data: await value, fromCache: false };
+}
+
+export type QuotePush = { symbol: string; quote?: unknown };
+
+const QuotePushSchema = z.object({
+  method: z.literal('notifications/quote'),
+  params: z.object({ symbol: z.string(), quote: z.unknown() }),
+});
+
+const quotePushListeners = new Set<(push: QuotePush) => void>();
+
+/** Live quote ticks pushed by the bridge ("notifications/quote"). */
+export function onQuotePush(cb: (push: QuotePush) => void): () => void {
+  quotePushListeners.add(cb);
+  return () => quotePushListeners.delete(cb);
+}
+
+/** Start the bridge's live quote stream (idempotent; polling stays as fallback). */
+export async function startQuoteStream(symbol: string): Promise<void> {
+  await callTool('subscribe_quote', { symbol });
 }
 
 export async function mcpHealth(): Promise<{ connected: boolean; tools: string[] }> {

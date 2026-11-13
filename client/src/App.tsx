@@ -1,6 +1,6 @@
-import type { Analysis, NewsEvent, Quote, TF } from '../../shared/types';
+import type { Analysis, NewsEvent, Quote, TF, TradeRecord } from '../../shared/types';
 import { TIMEFRAMES } from '../../shared/types';
-import { useAnalysis, useCandles, useHealth, useNews, useNow, useQuote } from './lib/api';
+import { useAnalysis, useCandles, useHealth, useNews, useNow, useQuote, useTrades } from './lib/api';
 import { countdown, fmtDateWib, fmtPrice, fmtTimeWib } from './lib/format';
 import Chart from './components/Chart';
 import Modal from './components/Modal';
@@ -9,9 +9,10 @@ import MtfTable from './components/MtfTable';
 import RiskCalculator from './components/RiskCalculator';
 import NewsPanel from './components/NewsPanel';
 import DecisionModal from './components/DecisionModal';
+import TradeHistory from './components/TradeHistory';
 import { useState } from 'react';
 
-type DetailKind = 'signal' | 'mtf' | 'structure' | 'risk' | 'news' | null;
+type DetailKind = 'signal' | 'mtf' | 'structure' | 'risk' | 'news' | 'history' | null;
 
 const BTN =
   'rounded px-2.5 py-1 text-xs tracking-wider transition-colors text-mute hover:bg-ink-800 hover:text-fg';
@@ -89,7 +90,7 @@ function StatusBar({ analysis, healthOk }: { analysis: Analysis | null; healthOk
 }
 
 /** Body for each detail modal; panel components render their own card chrome. */
-function DetailContent({ kind, analysis, events }: { kind: Exclude<DetailKind, null>; analysis: Analysis; events: NewsEvent[] }) {
+function DetailContent({ kind, analysis, events, trades }: { kind: Exclude<DetailKind, null>; analysis: Analysis; events: NewsEvent[]; trades: TradeRecord[] }) {
   switch (kind) {
     case 'signal':
       return <SignalPanel analysis={analysis} />;
@@ -148,6 +149,8 @@ function DetailContent({ kind, analysis, events }: { kind: Exclude<DetailKind, n
       return <RiskCalculator plan={analysis.plan} />;
     case 'news':
       return <NewsPanel events={events} />;
+    case 'history':
+      return <TradeHistory trades={trades} />;
   }
 }
 
@@ -157,6 +160,7 @@ const DETAIL_TITLE: Record<Exclude<DetailKind, null>, { title: string; subtitle:
   structure: { title: 'LEVEL KUNCI & POLA CANDLE', subtitle: 'Support/resistance sekitar harga dan pola terdeteksi', size: 'max-w-2xl' },
   risk: { title: 'KALKULATOR RISIKO', subtitle: 'Ukuran posisi berdasarkan modal dan jarak SL', size: 'max-w-lg' },
   news: { title: 'KALENDER EKONOMI', subtitle: 'Event berdampak ke emas dalam 7 hari ke depan', size: 'max-w-2xl' },
+  history: { title: 'RIWAYAT TRADING', subtitle: 'Sinyal tercatat beserta status SL/TP', size: 'max-w-2xl' },
 };
 
 export default function App() {
@@ -167,6 +171,7 @@ export default function App() {
   const quoteQuery = useQuote();
   const candlesQuery = useCandles(tf);
   const newsQuery = useNews();
+  const tradesQuery = useTrades();
   const healthQuery = useHealth();
 
   const analysis = analysisQuery.data;
@@ -202,6 +207,7 @@ export default function App() {
           <button onClick={() => setDetail('structure')} className={BTN}>Level &amp; Pola</button>
           <button onClick={() => setDetail('risk')} className={BTN}>Risiko</button>
           <button onClick={() => setDetail('news')} className={BTN}>Berita</button>
+          <button onClick={() => setDetail('history')} className={BTN}>Riwayat</button>
           <button onClick={() => setShowDecision(true)} className={BTN}>Cara Kerja</button>
         </div>
 
@@ -256,7 +262,7 @@ export default function App() {
           subtitle={DETAIL_TITLE[detail].subtitle}
           size={DETAIL_TITLE[detail].size}
         >
-          <DetailContent kind={detail} analysis={analysis} events={events} />
+          <DetailContent kind={detail} analysis={analysis} events={events} trades={tradesQuery.data ?? []} />
         </Modal>
       )}
 

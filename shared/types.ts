@@ -87,6 +87,31 @@ export interface TradePlan {
   action: PlanAction;
 }
 
+/** Lifecycle of a recorded signal: running until SL or TP (tp1) is touched. */
+export type TradeStatus = 'RUNNING' | 'TP_HIT' | 'SL_HIT';
+
+/** A BUY/SELL signal recorded as a trackable trade (levels from its TradePlan). */
+export interface TradeRecord {
+  id: string;
+  /** Unix seconds when the signal was generated. */
+  createdAt: number;
+  closedAt: number | null;
+  status: TradeStatus;
+  direction: 'BUY' | 'SELL';
+  /** Execution instruction at signal time. */
+  action: PlanAction;
+  entry: number;
+  sl: number;
+  tp1: number;
+  tp2: number | null;
+  /** Limit/stop orders only activate once price touches entry. */
+  filled: boolean;
+  exitPrice: number | null;
+  confidence: number;
+  setupType: string;
+  reasons: string[];
+}
+
 export interface NewsEvent {
   id: string;
   title: string;

@@ -5,9 +5,10 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { callTool, mcpHealth } from './mcp.js';
+import { callTool, mcpHealth, onQuotePush, startQuoteStream } from './mcp.js';
 import { computeAnalysis } from './analysis/signal.js';
 import { fetchCalendar } from './news/enrich.js';
+import { listTrades, recordSignal, resolveTrades } from './trades.js';
 import { TIMEFRAMES } from '../shared/types.js';
 import type { Analysis, Candle, NewsEvent, Quote, TF } from '../shared/types.js';
 
@@ -27,6 +28,7 @@ interface RawBar {
 
 interface RawQuote {
   lp?: number;
+  rtc?: number;
   ch?: number;
   chp?: number;
   bid?: number;
@@ -55,20 +57,25 @@ async function fetchCandles(tf: TF, count: number): Promise<Candle[]> {
   }));
 }
 
+/** Map wire quote (bridge `lp`/`ch`/…) to the domain Quote. */
+function toQuote(raw: RawQuote & { symbol: string }): Quote {
+  return {
+    symbol: SYMBOL,
+    last: raw.lp ?? raw.rtc ?? 0,
+    change: raw.ch ?? 0,
+    changePct: raw.chp ?? 0,
+    bid: raw.bid ?? null,
+    ask: raw.ask ?? null,
+    dayHigh: raw.high_price ?? null,
+    dayLow: raw.low_price ?? null,
+    updated: Math.floor(Date.now() / 1000),
+  };
+}
+
 async function fetchQuote(): Promise<Quote | null> {
   try {
     const { data } = await callTool<RawQuote & { symbol: string }>('get_quote', { symbol: SYMBOL });
-    return {
-      symbol: SYMBOL,
-      last: data.lp ?? 0,
-      change: data.ch ?? 0,
-      changePct: data.chp ?? 0,
-      bid: data.bid ?? null,
-      ask: data.ask ?? null,
-      dayHigh: data.high_price ?? null,
-      dayLow: data.low_price ?? null,
-      updated: Math.floor(Date.now() / 1000),
-    };
+    return toQuote(data);
   } catch {
     return null;
   }
@@ -125,6 +132,7 @@ async function computeAnalysisFull(): Promise<Analysis> {
   const candles = Object.fromEntries(TIMEFRAMES.map((tf, i) => [tf, candleSets[i]])) as Record<TF, Candle[]>;
   const value = computeAnalysis({ symbol: SYMBOL, quote, candles, tvRatings: ratings, events });
   analysisCache = { value, generatedAtMs: Date.now() };
+  recordSignal(value, value.generatedAt);
   return value;
 }
 
@@ -154,10 +162,14 @@ app.get('/api/quote', async (_req, res) => {
   res.json(await fetchQuote());
 });
 
-app.get('/api/candles', async (req, res) => {
-  const tf = parseTf(req.query.tf);
-  const count = Math.min(Math.max(Number(req.query.count ?? 300) || 300, 50), 5000);
-  res.json({ tf, bars: await fetchCandles(tf, count) });
+app.get('/api/candles', async (req, res, next) => {
+  try {
+    const tf = parseTf(req.query.tf);
+    const count = Math.min(Math.max(Number(req.query.count ?? 300) || 300, 50), 5000);
+    res.json({ tf, bars: await fetchCandles(tf, count) });
+  } catch (err) {
+    next(err);
+  }
 });
 
 app.get('/api/analysis', async (_req, res, next) => {
@@ -175,6 +187,15 @@ app.get('/api/news', async (req, res, next) => {
     const events: NewsEvent[] = await fetchCalendar({ hoursBehind: 6, hoursAhead: hours });
     const filtered = impact === 'all' ? events : events.filter((ev) => ev.impact.toLowerCase() === impact);
     res.json({ count: filtered.length, events: filtered });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/trades', async (_req, res, next) => {
+  try {
+    resolveTrades(await fetchQuote(), Math.floor(Date.now() / 1000));
+    res.json(listTrades());
   } catch (err) {
     next(err);
   }
@@ -212,6 +233,7 @@ async function streamTick(): Promise<void> {
     broadcast('quote', quote);
   }
 
+  if (resolveTrades(quote, Math.floor(Date.now() / 1000))) broadcast('trades', listTrades());
   const cached = analysisCache;
   const ageMs = cached ? Date.now() - cached.generatedAtMs : Number.POSITIVE_INFINITY;
   const moved = cached !== null && quote !== null && analysisPriceMoved(cached.value, quote.last);
@@ -219,6 +241,14 @@ async function streamTick(): Promise<void> {
     broadcast('analysis', await recomputeAnalysis());
   }
 }
+
+// Bridge quote ticks: push to clients instantly and resolve trade SL/TP.
+onQuotePush(({ quote }) => {
+  const q = toQuote((quote ?? {}) as RawQuote & { symbol: string });
+  lastQuotePushed = q;
+  broadcast('quote', q);
+  if (resolveTrades(q, Math.floor(Date.now() / 1000))) broadcast('trades', listTrades());
+});
 
 function startStream(): void {
   if (streamTimer) return;
@@ -231,6 +261,9 @@ function startStream(): void {
       console.error('[api] stream tick:', err instanceof Error ? err.message : err);
     });
   }, QUOTE_TICK_MS);
+  startQuoteStream(SYMBOL).catch((err) => {
+    console.error('[api] quote stream:', err instanceof Error ? err.message : err);
+  });
 }
 
 function stopStream(): void {
