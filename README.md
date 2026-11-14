@@ -4,12 +4,20 @@ Web app pendukung keputusan entry trading XAUUSD (Gold/USD): chart candle dari T
 mesin analisis konfluensi multi-timeframe, rencana entry/SL/TP berbasis ATR, kalkulator risiko,
 dan kalender ekonomi lengkap dengan analisis dampaknya terhadap emas.
 
-## Arsitektur
+## Stack
+
+| Lapisan | Teknologi |
+| --- | --- |
+| Bahasa | TypeScript (ESM), dieksekusi `tsx` — tanpa build step server |
+| Client | React 18, Vite 6, Tailwind CSS v4, `lightweight-charts` 5 |
+| Server | Node.js ≥ 20, Express 4, SSE (`/api/stream`) |
+| Data market | MCP stdio → `mcp-bridge` → `@mathieuc/tradingview` + feed ForexFactory |
+| Persistensi | PostgreSQL 18 via `pg` (tabel `trades`) |
 
 ```
 client/  (Vite + React + TS + Tailwind + lightweight-charts)
-   │  fetch /api/*
-server/  (Express + mesin analisis)
+   │  fetch /api/* + SSE /api/stream
+server/  (Express + mesin analisis + PostgreSQL)
    │  MCP protocol (stdio)
 mcp-bridge/  (MCP server "tradingview-lite")
    │
@@ -37,12 +45,24 @@ npm run build      # build client ke client/dist
 npm start          # Express menyajikan API + client di :3001
 ```
 
-Variabel lingkungan:
+Konfigurasi dibaca dari `.env` di root (template: `.env.example`):
 
 | Variabel | Default | Fungsi |
 | --- | --- | --- |
-| `PORT` | `3001` | Port REST API |
+| `PORT` | `3001` | Port REST API (bind `127.0.0.1`) |
 | `XAUUSD_SYMBOL` | `OANDA:XAUUSD` | Simbol TradingView yang dianalisis |
+| `PGHOST` | `127.0.0.1` | Host PostgreSQL |
+| `PGPORT` | `5432` | Port PostgreSQL |
+| `PGUSER` | `postgres` | User PostgreSQL |
+| `PGPASSWORD` | `postgres` | Password PostgreSQL |
+| `PGDATABASE` | `tradingvapp` | Nama database (skema dibuat otomatis) |
+
+## Penyimpanan riwayat
+
+Sinyal BUY/SELL dicatat otomatis ke tabel `trades` di PostgreSQL (skema dibuat saat
+startup). Status: `WAITING` (order limit/stop, entry belum tersentuh) → `RUNNING` →
+`TP_HIT`/`SL_HIT`; order yang tidak tersentuh dalam 1 jam jadi `EXPIRED`. Trade terakhir
+juga didorong realtime ke UI lewat event SSE `trades`.
 
 ## Cara kerja mesin analisis
 

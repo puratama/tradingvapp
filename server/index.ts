@@ -2,6 +2,7 @@
  * XAUUSD Decision Desk — REST API.
  * All market data flows through the MCP client (server/mcp.ts).
  */
+import './env.js'; // must stay first: later imports read process.env at load time
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -132,7 +133,7 @@ async function computeAnalysisFull(): Promise<Analysis> {
   const candles = Object.fromEntries(TIMEFRAMES.map((tf, i) => [tf, candleSets[i]])) as Record<TF, Candle[]>;
   const value = computeAnalysis({ symbol: SYMBOL, quote, candles, tvRatings: ratings, events });
   analysisCache = { value, generatedAtMs: Date.now() };
-  recordSignal(value, value.generatedAt);
+  await recordSignal(value, value.generatedAt);
   return value;
 }
 
@@ -194,8 +195,8 @@ app.get('/api/news', async (req, res, next) => {
 
 app.get('/api/trades', async (_req, res, next) => {
   try {
-    resolveTrades(await fetchQuote(), Math.floor(Date.now() / 1000));
-    res.json(listTrades());
+    await resolveTrades(await fetchQuote(), Math.floor(Date.now() / 1000));
+    res.json(await listTrades());
   } catch (err) {
     next(err);
   }
@@ -233,7 +234,7 @@ async function streamTick(): Promise<void> {
     broadcast('quote', quote);
   }
 
-  if (resolveTrades(quote, Math.floor(Date.now() / 1000))) broadcast('trades', listTrades());
+  await tickTrades(quote);
   const cached = analysisCache;
   const ageMs = cached ? Date.now() - cached.generatedAtMs : Number.POSITIVE_INFINITY;
   const moved = cached !== null && quote !== null && analysisPriceMoved(cached.value, quote.last);
@@ -247,8 +248,13 @@ onQuotePush(({ quote }) => {
   const q = toQuote((quote ?? {}) as RawQuote & { symbol: string });
   lastQuotePushed = q;
   broadcast('quote', q);
-  if (resolveTrades(q, Math.floor(Date.now() / 1000))) broadcast('trades', listTrades());
+  void tickTrades(q);
 });
+
+/** Resolve SL/TP for every open trade, then push the list when it changed. */
+async function tickTrades(q: Quote | null): Promise<void> {
+  if (await resolveTrades(q, Math.floor(Date.now() / 1000))) broadcast('trades', await listTrades());
+}
 
 function startStream(): void {
   if (streamTimer) return;

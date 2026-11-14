@@ -44,6 +44,7 @@ dari −5 menit sampai +1 jam → verdict dipaksa `WAIT`).
 |`mcp-bridge/`|MCP server stdio; `forexfactory.ts` = fetch feed kalender|
 |`client/src/components/`|`Chart`, `SignalPanel`, `MtfTable`, `RiskCalculator`, `NewsPanel`, `TradeHistory`|
 |`client/src/lib/`|`api.ts` (hooks polling), `format.ts` (WIB, angka, countdown)|
+|`client/src/App.tsx`|Layout utama: chart (kiri) + sidebar kanan `w-1/5` berisi tab `SINYAL` (default) / `RIWAYAT`; detail lain lewat modal toolbar|
 
 ## Development Commands
 
@@ -55,8 +56,10 @@ npm start          # production: Express serve API + client/dist di :3001
 npm run typecheck  # tsc --noEmit untuk project server DAN client
 ```
 
-Env vars: `PORT` (default `3001`, bind `127.0.0.1` saja), `XAUUSD_SYMBOL`
-(default `OANDA:XAUUSD`), `NODE_ENV=production` mengaktifkan serve `client/dist`.
+Konfigurasi: salin `.env.example` → `.env` (gitignored). Variabel: `PORT`
+(default `3001`, bind `127.0.0.1` saja), `XAUUSD_SYMBOL` (default
+`OANDA:XAUUSD`), `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`,
+`NODE_ENV=production` mengaktifkan serve `client/dist`.
 
 ## Code Conventions & Common Patterns
 
@@ -78,10 +81,18 @@ Env vars: `PORT` (default `3001`, bind `127.0.0.1` saja), `XAUUSD_SYMBOL`
   (single-flight), dihitung ulang lebih awal bila harga bergeser ≥ 0.2×ATR H1
   (interval minimum 8 dtk).
 - **Trade history**: `server/trades.ts` — sinyal BUY/SELL otomatis jadi
-  `TradeRecord` (persist `data/trades.json`, gitignored, ditulis ulang tiap
-  perubahan); `resolveTrade` murni = test seam utama riwayat. Harga wire
-  tidak sah (≤ 0 / `NaN`, mis. `lp` absen) WAJIB diabaikan — jangan pernah
-  menutup trade dengan harga busuk (regresi nyata: TP_HIT palsu).
+  `TradeRecord` (persist **PostgreSQL**, `pg` Pool, `DATABASE_URL` env dengan
+  default `postgresql://postgres:postgres@127.0.0.1:5432/tradingvapp`);
+  `resolveTrade` murni = test seam utama riwayat. Status:
+  `WAITING` (order limit/stop, entry belum tersentuh) → `RUNNING` (entry
+  terisi) → `TP_HIT`/`SL_HIT`; `action.kind === 'MARKET'` langsung `RUNNING`.
+  Order yang entry-nya tak tersentuh dalam `WAITING_TTL_SEC` (1 jam) jadi
+  `EXPIRED` — tanpa itu limit menggantung memblokir semua sinyal searah
+  selamanya. Cek expiry berjalan sebelum guard harga, jadi feed mati pun
+  tetap mengedaluwarsakan order. Sinyal searah yang masih `WAITING`/`RUNNING`
+  memblokir record baru. Harga wire tidak sah (≤ 0 / `NaN`, mis. `lp` absen)
+  WAJIB diabaikan — jangan pernah menutup trade dengan harga busuk
+  (regresi nyata: TP_HIT palsu).
 - **Error handling**: handler tool bridge membungkus hasil dengan `errorResult`
   (`isError: true`, JSON `{error}`); `callTool` melempar `Error` bila `isError`/`error`
   ada; Express memakai error middleware → `500 {error}`; hooks client menyimpan
@@ -134,7 +145,15 @@ Env vars: `PORT` (default `3001`, bind `127.0.0.1` saja), `XAUUSD_SYMBOL`
   koneksi sendiri dan kena rate-limit 429.
 - `shared/indicators.ts` — SMA/EMA/RSI/MACD/ATR/Bollinger murni (null-padded).
 - `server/trades.ts` — riwayat trading: `recordSignal`, `resolveTrade` (murni),
-  `resolveTrades`, `listTrades`; persist `data/trades.json`.
+  `resolveTrades`, `listTrades`; **semua async** (persist PostgreSQL).
+- **DB**: tabel `trades` (kolom snake_case: `created_at`/`closed_at` BIGINT detik,
+  `filled` BOOLEAN, `exit_price`, `setup_type`, `action`/`reasons` = JSON string)
+  + index `trades_status_dir`; skema dibuat sekali per proses (`ensureSchema`).
+  `resolveTrade` tetap murni sehingga self-check jalan tanpa DB.
+- **Env**: `.env` di root repo (gitignored, template `.env.example`) dibaca oleh
+  `server/env.ts` (`process.loadEnvFile`) yang WAJIB di-import pertama di
+  `server/index.ts` — modul lain membaca `process.env` saat load. Koneksi DB
+  memakai variabel standar `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`.
 - `server/trades.test.ts` — self-check assert (`npx tsx server/trades.test.ts`)
   untuk `resolveTrade`: fill limit, gap SL, mirror BUY/SELL, harga tidak sah.
 - `client/src/components/Chart.tsx` — lightweight-charts v5
@@ -155,7 +174,8 @@ Env vars: `PORT` (default `3001`, bind `127.0.0.1` saja), `XAUUSD_SYMBOL`
 - `tsc` dipakai hanya untuk typecheck (`--noEmit`), bukan kompilasi.
 - Windows-friendly: spawn bridge memakai `process.execPath` (node), bukan `npx`.
 - Dependensi runtime inti: `express`, `@modelcontextprotocol/sdk` (1.x, pasangan
-  `zod` 3.x), `@mathieuc/tradingview`, `react` 18, `lightweight-charts` 5.
+  `zod` 3.x), `@mathieuc/tradingview`, `pg` (pool Postgres), `react` 18,
+  `lightweight-charts` 5.
 - Data candle memakai endpoint internal TradingView yang **tidak resmi** —
   antisipasi perubahan API; semua aksesnya terisolasi di `mcp-bridge/`.
 

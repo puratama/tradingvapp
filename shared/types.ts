@@ -87,8 +87,10 @@ export interface TradePlan {
   action: PlanAction;
 }
 
-/** Lifecycle of a recorded signal: running until SL or TP (tp1) is touched. */
-export type TradeStatus = 'RUNNING' | 'TP_HIT' | 'SL_HIT';
+/** Lifecycle of a recorded signal: WAITING until the entry is touched, then
+ *  RUNNING until SL or TP (tp1) is hit. Market fills start RUNNING; unfilled
+ *  orders that never reach their entry expire after an hour. */
+export type TradeStatus = 'WAITING' | 'RUNNING' | 'TP_HIT' | 'SL_HIT' | 'EXPIRED';
 
 /** A BUY/SELL signal recorded as a trackable trade (levels from its TradePlan). */
 export interface TradeRecord {
