@@ -22,16 +22,23 @@ function PriceCell({ label, value, color }: { label: string; value: number | nul
   );
 }
 
-export default function SignalPanel({ analysis }: { analysis: Analysis }) {
+interface SignalPanelProps {
+  analysis: Analysis;
+  /** Sidebar summary: drop the long reason/warning lists into a modal instead. */
+  compact?: boolean;
+  onDetail?: () => void;
+}
+
+export default function SignalPanel({ analysis, compact = false, onDetail }: SignalPanelProps) {
   const { plan, reasons, warnings, newsRisk } = analysis;
   const v = VERDICT[plan.verdict];
 
   return (
-    <section className="rise rounded-lg border border-line bg-ink-900/80 p-4">
+    <section className="rise p-3">
       <div className="flex items-baseline justify-between">
-        <h2 className="font-display text-sm tracking-[0.25em] text-gold-soft">SINYAL ENTRY</h2>
+        <span className="text-[10px] tracking-[0.18em] text-mute">TERAKHIR DIHITUNG</span>
         <span className="text-[10px] tracking-widest text-mute">
-          XAUUSD · {new Date(analysis.generatedAt * 1000).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })} WIB
+          {new Date(analysis.generatedAt * 1000).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })} WIB
         </span>
       </div>
 
@@ -96,30 +103,42 @@ export default function SignalPanel({ analysis }: { analysis: Analysis }) {
         {newsRisk.note}
       </div>
 
-      <h3 className="mt-4 text-[10px] tracking-[0.22em] text-mute">ALASAN KEPUTUSAN</h3>
-      <ul className="mt-2 space-y-1.5">
-        {reasons.map((r) => (
-          <li key={r} className="flex gap-2 text-xs leading-relaxed text-fg/85">
-            <span className="mt-0.5 text-gold">▸</span>
-            <span>{r}</span>
-          </li>
-        ))}
-      </ul>
-
-      {warnings.length > 0 && (
+      {compact ? (
+        <button
+          onClick={onDetail}
+          disabled={!onDetail}
+          className="mt-3 w-full rounded border border-line px-2 py-1.5 text-[11px] tracking-wider text-mute transition-colors hover:border-gold/40 hover:text-fg disabled:opacity-50"
+        >
+          LIHAT {reasons.length} ALASAN{warnings.length > 0 ? ` + ${warnings.length} PERINGATAN` : ''}
+        </button>
+      ) : (
         <>
-          <h3 className="mt-4 text-[10px] tracking-[0.22em] text-warn">PERINGATAN</h3>
+          <h3 className="mt-4 text-[10px] tracking-[0.22em] text-mute">ALASAN KEPUTUSAN</h3>
           <ul className="mt-2 space-y-1.5">
-            {warnings.map((w) => (
-              <li key={w} className="flex gap-2 rounded border border-warn/25 bg-warn/5 px-2 py-1.5 text-xs leading-relaxed text-warn">
-                <svg className="mt-0.5 h-3.5 w-3.5 shrink-0" viewBox="0 0 16 16" fill="none" aria-hidden>
-                  <path d="M8 1.5 15 14H1L8 1.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-                  <path d="M8 6v4M8 11.5v.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-                </svg>
-                <span>{w}</span>
+            {reasons.map((r) => (
+              <li key={r} className="flex gap-2 text-xs leading-relaxed text-fg/85">
+                <span className="mt-0.5 text-gold">▸</span>
+                <span>{r}</span>
               </li>
             ))}
           </ul>
+
+          {warnings.length > 0 && (
+            <>
+              <h3 className="mt-4 text-[10px] tracking-[0.22em] text-warn">PERINGATAN</h3>
+              <ul className="mt-2 space-y-1.5">
+                {warnings.map((w) => (
+                  <li key={w} className="flex gap-2 rounded border border-warn/25 bg-warn/5 px-2 py-1.5 text-xs leading-relaxed text-warn">
+                    <svg className="mt-0.5 h-3.5 w-3.5 shrink-0" viewBox="0 0 16 16" fill="none" aria-hidden>
+                      <path d="M8 1.5 15 14H1L8 1.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+                      <path d="M8 6v4M8 11.5v.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                    </svg>
+                    <span>{w}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </>
       )}
     </section>

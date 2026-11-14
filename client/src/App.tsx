@@ -1,4 +1,4 @@
-import type { Analysis, NewsEvent, Quote, TF, TradeRecord } from '../../shared/types';
+import type { Analysis, NewsEvent, Quote, TF } from '../../shared/types';
 import { TIMEFRAMES } from '../../shared/types';
 import { useAnalysis, useCandles, useHealth, useNews, useNow, useQuote, useTrades } from './lib/api';
 import { countdown, fmtDateWib, fmtPrice, fmtTimeWib } from './lib/format';
@@ -9,10 +9,11 @@ import MtfTable from './components/MtfTable';
 import RiskCalculator from './components/RiskCalculator';
 import NewsPanel from './components/NewsPanel';
 import DecisionModal from './components/DecisionModal';
-import TradeHistory from './components/TradeHistory';
+import TradeHistory, { TradeDetail } from './components/TradeHistory';
 import { useState } from 'react';
 
-type DetailKind = 'signal' | 'mtf' | 'structure' | 'risk' | 'news' | 'history' | null;
+type DetailKind = 'signal' | 'mtf' | 'structure' | 'risk' | 'news' | null;
+type SideTab = 'signal' | 'history';
 
 const BTN =
   'rounded px-2.5 py-1 text-xs tracking-wider transition-colors text-mute hover:bg-ink-800 hover:text-fg';
@@ -90,7 +91,7 @@ function StatusBar({ analysis, healthOk }: { analysis: Analysis | null; healthOk
 }
 
 /** Body for each detail modal; panel components render their own card chrome. */
-function DetailContent({ kind, analysis, events, trades }: { kind: Exclude<DetailKind, null>; analysis: Analysis; events: NewsEvent[]; trades: TradeRecord[] }) {
+function DetailContent({ kind, analysis, events }: { kind: Exclude<DetailKind, null>; analysis: Analysis; events: NewsEvent[] }) {
   switch (kind) {
     case 'signal':
       return <SignalPanel analysis={analysis} />;
@@ -149,8 +150,6 @@ function DetailContent({ kind, analysis, events, trades }: { kind: Exclude<Detai
       return <RiskCalculator plan={analysis.plan} />;
     case 'news':
       return <NewsPanel events={events} />;
-    case 'history':
-      return <TradeHistory trades={trades} />;
   }
 }
 
@@ -160,12 +159,13 @@ const DETAIL_TITLE: Record<Exclude<DetailKind, null>, { title: string; subtitle:
   structure: { title: 'LEVEL KUNCI & POLA CANDLE', subtitle: 'Support/resistance sekitar harga dan pola terdeteksi', size: 'max-w-2xl' },
   risk: { title: 'KALKULATOR RISIKO', subtitle: 'Ukuran posisi berdasarkan modal dan jarak SL', size: 'max-w-lg' },
   news: { title: 'KALENDER EKONOMI', subtitle: 'Event berdampak ke emas dalam 7 hari ke depan', size: 'max-w-2xl' },
-  history: { title: 'RIWAYAT TRADING', subtitle: 'Sinyal tercatat beserta status SL/TP', size: 'max-w-2xl' },
 };
 
 export default function App() {
   const [tf, setTf] = useState<TF>('H1');
+  const [sideTab, setSideTab] = useState<SideTab>('signal');
   const [detail, setDetail] = useState<DetailKind>(null);
+  const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
   const [showDecision, setShowDecision] = useState(false);
   const analysisQuery = useAnalysis();
   const quoteQuery = useQuote();
@@ -177,6 +177,9 @@ export default function App() {
   const analysis = analysisQuery.data;
   const quote = quoteQuery.data ?? analysis?.quote ?? null;
   const events = newsQuery.data?.events ?? [];
+  const trades = tradesQuery.data ?? [];
+  // Derived (not stored) so the open modal keeps up with live status changes.
+  const selectedTrade = trades.find((t) => t.id === selectedTradeId) ?? null;
   const healthOk = healthQuery.data?.ok ?? true;
 
   return (
@@ -202,12 +205,10 @@ export default function App() {
         <div className="mx-3 h-4 w-px bg-line" />
 
         <div className="flex flex-wrap gap-1">
-          <button onClick={() => setDetail('signal')} className={BTN}>Sinyal</button>
           <button onClick={() => setDetail('mtf')} className={BTN}>Multi-TF</button>
           <button onClick={() => setDetail('structure')} className={BTN}>Level &amp; Pola</button>
           <button onClick={() => setDetail('risk')} className={BTN}>Risiko</button>
           <button onClick={() => setDetail('news')} className={BTN}>Berita</button>
-          <button onClick={() => setDetail('history')} className={BTN}>Riwayat</button>
           <button onClick={() => setShowDecision(true)} className={BTN}>Cara Kerja</button>
         </div>
 
@@ -221,36 +222,64 @@ export default function App() {
         )}
       </div>
 
-      {/* Chart fills the viewport like TradingView. */}
-      <main className="relative min-h-0 flex-1">
-        {analysis && (
-          <div className="absolute inset-0">
-            <Chart
-              candles={candlesQuery.data?.bars ?? []}
-              tf={tf}
-              plan={analysis.plan}
-              patterns={analysis.patterns}
-              livePrice={quote?.last ?? null}
-              full
-            />
-          </div>
-        )}
-
-        {!analysis && analysisQuery.loading && (
-          <div className="flex h-full items-center justify-center">
-            <div className="rounded-lg border border-line bg-ink-900/60 px-10 py-8 text-center">
-              <div className="font-display text-lg tracking-[0.25em] text-gold-soft">MENYIAPKAN ANALISIS…</div>
-              <p className="mt-2 text-xs text-mute">Mengambil candle multi-timeframe, berita, dan menyusun konfluensi.</p>
+      {/* Chart + fixed-width side panel (signal / history) always visible. */}
+      <div className="flex min-h-0 flex-1">
+        <main className="relative min-h-0 flex-1">
+          {analysis && (
+            <div className="absolute inset-0">
+              <Chart
+                candles={candlesQuery.data?.bars ?? []}
+                tf={tf}
+                dataTf={candlesQuery.data?.tf ?? null}
+                plan={analysis.plan}
+                patterns={analysis.patterns}
+                livePrice={quote?.last ?? null}
+                full
+              />
             </div>
-          </div>
-        )}
+          )}
 
-        {healthQuery.data && !healthQuery.data.ok && (
-          <div className="absolute left-4 top-4 rounded border border-down/40 bg-down/10 px-3 py-1.5 text-xs text-down">
-            Koneksi data market (MCP bridge) tidak aktif — harga dan analisis mungkin kedaluwarsa.
+          {!analysis && analysisQuery.loading && (
+            <div className="flex h-full items-center justify-center">
+              <div className="rounded-lg border border-line bg-ink-900/60 px-10 py-8 text-center">
+                <div className="font-display text-lg tracking-[0.25em] text-gold-soft">MENYIAPKAN ANALISIS...</div>
+                <p className="mt-2 text-xs text-mute">Mengambil candle multi-timeframe, berita, dan menyusun konfluensi.</p>
+              </div>
+            </div>
+          )}
+
+          {healthQuery.data && !healthQuery.data.ok && (
+            <div className="absolute left-4 top-4 rounded border border-down/40 bg-down/10 px-3 py-1.5 text-xs text-down">
+              Koneksi data market (MCP bridge) tidak aktif — harga dan analisis mungkin kedaluwarsa.
+            </div>
+          )}
+        </main>
+
+        <aside className="flex w-1/5 min-w-72 max-w-md flex-col border-l border-line bg-ink-950/60">
+          <div className="flex shrink-0 gap-1 border-b border-line px-2 py-1.5">
+            {(['signal', 'history'] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setSideTab(tab)}
+                className={`flex-1 rounded px-2 py-1 text-[11px] tracking-wider transition-colors ${
+                  sideTab === tab ? 'bg-gold/20 text-gold-soft' : 'text-mute hover:bg-ink-800 hover:text-fg'
+                }`}
+              >
+                {tab === 'signal' ? 'SINYAL' : 'RIWAYAT'}
+              </button>
+            ))}
           </div>
-        )}
-      </main>
+          <div className="min-h-0 flex-1 overflow-y-auto p-2">
+            {!analysis && <p className="py-6 text-center text-xs text-mute">Menunggu analisis...</p>}
+            {analysis && sideTab === 'signal' && (
+              <SignalPanel analysis={analysis} compact onDetail={() => setDetail('signal')} />
+            )}
+            {sideTab === 'history' && (
+              <TradeHistory trades={trades} onSelect={(t) => setSelectedTradeId(t.id)} />
+            )}
+          </div>
+        </aside>
+      </div>
 
       <StatusBar analysis={analysis} healthOk={healthOk} />
 
@@ -262,7 +291,19 @@ export default function App() {
           subtitle={DETAIL_TITLE[detail].subtitle}
           size={DETAIL_TITLE[detail].size}
         >
-          <DetailContent kind={detail} analysis={analysis} events={events} trades={tradesQuery.data ?? []} />
+          <DetailContent kind={detail} analysis={analysis} events={events} />
+        </Modal>
+      )}
+
+      {selectedTrade && (
+        <Modal
+          open
+          onClose={() => setSelectedTradeId(null)}
+          title={`${selectedTrade.direction} · ${selectedTrade.action.label}`}
+          subtitle={`${fmtDateWib(selectedTrade.createdAt)} · ${fmtTimeWib(selectedTrade.createdAt)} WIB`}
+          size="max-w-lg"
+        >
+          <TradeDetail trade={selectedTrade} />
         </Modal>
       )}
 

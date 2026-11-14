@@ -21,7 +21,11 @@ import { fmtDateWib, fmtTimeWib } from '../lib/format';
 
 interface ChartProps {
   candles: Candle[];
+  /** Selected timeframe (drives the tick formatter). */
   tf: TF;
+  /** Timeframe the current `candles` belong to — differs from `tf` while a
+   *  switch is still loading; only a change here may reset the viewport. */
+  dataTf: TF | null;
   plan: TradePlan;
   patterns: Pattern[];
   /** Live tick from the quote stream; patches the developing bar between candle polls. */
@@ -54,13 +58,15 @@ function tickFormatter(tf: TF) {
     tf === 'D1' || tickMarkType < TickMarkType.Time ? fmtDateWib(time as number) : fmtTimeWib(time as number);
 }
 
-export default function Chart({ candles, tf, plan, patterns, livePrice, full = false }: ChartProps) {
+export default function Chart({ candles, tf, dataTf, plan, patterns, livePrice, full = false }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const emaSeriesRef = useRef<ISeriesApi<'Line'>[]>([]);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
+  /** Dataset the viewport was last fitted to; a poll must never refit. */
+  const fittedTfRef = useRef<TF | null>(null);
 
   // Create chart + series once.
   useEffect(() => {
@@ -125,11 +131,17 @@ export default function Chart({ candles, tf, plan, patterns, livePrice, full = f
     };
   }, []);
 
-  // Push candle data + EMA overlays.
+  // Push candle data + EMA overlays. Polls replace the dataset every 20s, so the
+  // visible time range is restored afterwards — only a timeframe switch (or the
+  // first load) resets the viewport to the latest price. Time (not logical
+  // index) is used so the view survives the oldest bar dropping out of the window.
   useEffect(() => {
     const chart = chartRef.current;
     const series = candleSeriesRef.current;
     if (!chart || !series || candles.length === 0) return;
+
+    const refit = fittedTfRef.current !== dataTf;
+    const range = refit ? null : chart.timeScale().getVisibleRange();
 
     series.setData(
       candles.map((c) => ({
@@ -143,7 +155,7 @@ export default function Chart({ candles, tf, plan, patterns, livePrice, full = f
 
     const closes = candles.map((c) => c.close);
     EMA_OVERLAYS.forEach((o, i) => {
-      const data = ema(closes, o.period).flatMap((value: number | null, idx: number) =>
+      const data = ema(closes, o.period).flatMap((value: number | null, idx) =>
         value === null ? [] : [{ time: candles[idx].time as UTCTimestamp, value }],
       );
       emaSeriesRef.current[i]?.setData(data);
@@ -154,8 +166,11 @@ export default function Chart({ candles, tf, plan, patterns, livePrice, full = f
         tickMarkFormatter: tickFormatter(tf),
       },
     });
-    chart.timeScale().fitContent();
-  }, [candles, tf]);
+
+    if (range) chart.timeScale().setVisibleRange(range);
+    else chart.timeScale().fitContent();
+    fittedTfRef.current = dataTf;
+  }, [candles, tf, dataTf]);
 
   // Patch the developing bar with the live tick between candle polls.
   // Incremental update only — no setData/fitContent churn per tick.

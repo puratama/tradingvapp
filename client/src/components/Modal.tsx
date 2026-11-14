@@ -16,16 +16,20 @@ interface ModalProps {
  */
 export default function Modal({ open, onClose, title, subtitle, children, size = 'max-w-lg' }: ModalProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  // Callers pass an inline onClose, so it changes every render — keeping it in
+  // the effect deps would re-run the effect (and steal focus) on every keystroke.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onCloseRef.current();
     };
     window.addEventListener('keydown', onKey);
     closeRef.current?.focus();
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
