@@ -73,16 +73,15 @@ Konfigurasi: salin `.env.example` → `.env` (gitignored). Variabel: `PORT`
   `TradePlan`, `TradeRecord`, `Analysis`, `NewsEvent`, …) hidup di `shared/types.ts` — jangan
   menduplikasi di client/server.
 - **Pure core**: `shared/indicators.ts` dan `server/analysis/{structure,patterns,signal}.ts`
-  bebas I/O — inilah test seam utama. Semua I/O (MCP, fetch) terkonsentrasi di
-  `server/mcp.ts`, `server/index.ts`, `mcp-bridge/`.
+  bebas I/O — inilah test seam utama. Semua I/O (MCP, fetch, DB) terkonsentrasi di
+  `server/mcp.ts`, `server/index.ts`, `server/trades.ts`, `mcp-bridge/`.
 - **Caching**: `server/mcp.ts` — `Map` cache TTL per tool (`get_quote` 3 dtk,
   `get_ohlcv` 10 dtk, TA 1 menit, kalender 5 menit); cache hanya dedupe — kesegaran
   diatur lapisan stream. Cache analisis di `server/index.ts` maksimal 20 dtk
   (single-flight), dihitung ulang lebih awal bila harga bergeser ≥ 0.2×ATR H1
   (interval minimum 8 dtk).
 - **Trade history**: `server/trades.ts` — sinyal BUY/SELL otomatis jadi
-  `TradeRecord` (persist **PostgreSQL**, `pg` Pool, `DATABASE_URL` env dengan
-  default `postgresql://postgres:postgres@127.0.0.1:5432/tradingvapp`);
+  `TradeRecord` (persist **PostgreSQL**, `pg` Pool, variabel `PG*` dari `.env`);
   `resolveTrade` murni = test seam utama riwayat. Status:
   `WAITING` (order limit/stop, entry belum tersentuh) → `RUNNING` (entry
   terisi) → `TP_HIT`/`SL_HIT`; `action.kind === 'MARKET'` langsung `RUNNING`.
@@ -158,6 +157,10 @@ Konfigurasi: salin `.env.example` → `.env` (gitignored). Variabel: `PORT`
   untuk `resolveTrade`: fill limit, gap SL, mirror BUY/SELL, harga tidak sah.
 - `client/src/components/Chart.tsx` — lightweight-charts v5
   (`addSeries(CandlestickSeries)`, `createSeriesMarkers`, price line ENTRY/SL/TP).
+  **Jangan `fitContent()` di setiap update data**: `useCandles` poll 20 dtk, jadi
+  viewport disimpan (`getVisibleRange`/`setVisibleRange`, berbasis waktu bukan index
+  logis) dan hanya di-refit saat `dataTf` berubah — prop itu menandai TF milik
+  dataset, bukan TF terpilih, karena saat switch data lama masih terpasang.
 - `vite.config.ts` — root `client/`, plugin react + tailwindcss, proxy `/api`.
 - `client/src/index.css` — token tema Tailwind v4 (`@theme`: `ink-*`, `gold`, `up`,
   `down`, `warn`; font heading `Poppins`, body `IBM Plex Sans`, angka `IBM Plex Mono`).
