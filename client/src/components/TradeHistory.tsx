@@ -1,70 +1,75 @@
 import type { TradeRecord } from '../../../shared/types';
 import { fmtDateWib, fmtNum, fmtPrice, fmtTimeWib } from '../lib/format';
+import { Chip, type Tone } from '../ui/Chip';
+import { NUM } from '../ui/styles';
 
-const STATUS_CHIP: Record<TradeRecord['status'], { label: string; chip: string }> = {
-  WAITING: { label: 'MENUNGGU ENTRY', chip: 'bg-ink-800 text-mute border-line' },
-  RUNNING: { label: 'BERJALAN', chip: 'bg-warn/15 text-warn border-warn/30' },
-  TP_HIT: { label: 'TAKE PROFIT', chip: 'bg-up/15 text-up border-up/30' },
-  SL_HIT: { label: 'STOP LOSS', chip: 'bg-down/15 text-down border-down/30' },
-  EXPIRED: { label: 'KEDALUWARSA', chip: 'bg-ink-800 text-mute border-line' },
+const STATUS: Record<TradeRecord['status'], { label: string; tone: Tone }> = {
+  WAITING: { label: 'Menunggu entry', tone: 'neutral' },
+  RUNNING: { label: 'Berjalan', tone: 'warn' },
+  TP_HIT: { label: 'Take profit', tone: 'bull' },
+  SL_HIT: { label: 'Stop loss', tone: 'bear' },
+  EXPIRED: { label: 'Kedaluwarsa', tone: 'neutral' },
 };
+
+function PriceBox({ label, value, toneClass = 'text-fg' }: { label: string; value: number | null; toneClass?: string }) {
+  return (
+    <div className="rounded-md border border-line bg-surface-2 px-2.5 py-1.5">
+      <div className="text-2xs font-medium uppercase tracking-wide text-muted">{label}</div>
+      <div className={`${NUM} text-sm font-semibold ${toneClass}`}>{fmtPrice(value)}</div>
+    </div>
+  );
+}
 
 /** Full trade detail for the modal — never collapsed. */
 export function TradeDetail({ trade: t }: { trade: TradeRecord }) {
-  const chip = STATUS_CHIP[t.status];
+  const chip = STATUS[t.status];
   return (
     <div className="space-y-3 text-xs">
       <div className="flex flex-wrap items-center gap-2">
-        <span
-          className={`rounded px-1.5 py-0.5 text-[10px] tracking-wider ${
-            t.direction === 'BUY' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'
-          }`}
-        >
-          {t.direction}
-        </span>
-        <span className={`rounded border px-1.5 py-0.5 text-[10px] tracking-wider ${chip.chip}`}>{chip.label}</span>
-        <span className="text-mute">
-          {fmtDateWib(t.createdAt)} · {fmtTimeWib(t.createdAt)} WIB
+        <Chip tone={t.direction === 'BUY' ? 'bull' : 'bear'}>{t.direction}</Chip>
+        <Chip tone={chip.tone}>{chip.label}</Chip>
+        <span className="text-muted">{t.setupType}</span>
+        <span className="ml-auto text-muted">
+          Konfluensi <span className={`${NUM} text-fg`}>{fmtNum(t.confidence)}%</span>
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        <PriceBox label="ENTRY" value={t.entry} />
-        <PriceBox label="STOP LOSS" value={t.sl} />
-        <PriceBox label="TAKE PROFIT 1" value={t.tp1} />
-        <PriceBox label="TAKE PROFIT 2" value={t.tp2} />
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <PriceBox label="Entry" value={t.entry} />
+        <PriceBox label="Stop loss" value={t.sl} toneClass="text-bear" />
+        <PriceBox label="Take profit" value={t.tp1} toneClass="text-bull" />
+        <PriceBox label="Exit" value={t.exitPrice} />
       </div>
 
-      <p className="text-mute">
+      <p className="text-muted">
         Eksekusi: <span className="text-fg/80">{t.action.label}</span> — {t.action.note}
       </p>
-      <p className="text-mute">
-        Setup <span className="text-fg/80">{t.setupType}</span> · confidence{' '}
-        <span className="num text-fg/80">{fmtNum(t.confidence)}%</span>
+      <p className="text-muted">
+        Dibuat {fmtDateWib(t.createdAt)} · {fmtTimeWib(t.createdAt)} WIB
       </p>
 
       {t.status === 'WAITING' && (
-        <p className="rounded border border-line bg-ink-850/50 px-2 py-1.5 text-mute">
+        <p className="rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-muted">
           Menunggu harga menyentuh entry {fmtPrice(t.entry)} · batal otomatis bila tak tersentuh dalam 1 jam.
         </p>
       )}
       {t.status === 'EXPIRED' && t.closedAt !== null && (
-        <p className="rounded border border-line bg-ink-850/50 px-2 py-1.5 text-mute">
+        <p className="rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-muted">
           Entry tak tersentuh dalam 1 jam · dibatalkan {fmtTimeWib(t.closedAt)} WIB.
         </p>
       )}
       {(t.status === 'TP_HIT' || t.status === 'SL_HIT') && t.exitPrice !== null && t.closedAt !== null && (
-        <p className="rounded border border-line bg-ink-850/50 px-2 py-1.5 text-mute">
+        <p className="rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-muted">
           Exit {fmtPrice(t.exitPrice)} · ditutup {fmtDateWib(t.closedAt)} {fmtTimeWib(t.closedAt)} WIB.
         </p>
       )}
 
       <div>
-        <h3 className="text-[10px] tracking-[0.22em] text-mute">ALASAN KEPUTUSAN</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted">Alasan saat sinyal</h3>
         <ul className="mt-2 space-y-1.5">
-          {t.reasons.map((r, i) => (
-            <li key={i} className="flex gap-2 leading-relaxed text-fg/85">
-              <span className="mt-0.5 text-gold">▸</span>
+          {t.reasons.map((r) => (
+            <li key={r} className="flex gap-2 leading-relaxed text-fg/80">
+              <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-accent" aria-hidden />
               <span>{r}</span>
             </li>
           ))}
@@ -74,68 +79,53 @@ export function TradeDetail({ trade: t }: { trade: TradeRecord }) {
   );
 }
 
-function PriceBox({ label, value }: { label: string; value: number | null }) {
-  return (
-    <div className="rounded border border-line-soft bg-ink-850/60 px-2 py-1.5">
-      <div className="text-[10px] tracking-[0.18em] text-mute">{label}</div>
-      <div className="num text-sm text-fg">{fmtPrice(value)}</div>
-    </div>
-  );
-}
-
 export default function TradeHistory({ trades, onSelect }: { trades: TradeRecord[]; onSelect: (trade: TradeRecord) => void }) {
-
   return (
-    <section className="rise p-3">
-      <p className="text-[10px] leading-relaxed text-mute">
-        Sinyal BUY/SELL tercatat otomatis · status dari harga real-time (TP = tp1) · klik untuk detail lengkap
+    <section className="rise">
+      <p className="text-2xs leading-relaxed text-muted">
+        Sinyal BUY/SELL tercatat otomatis · status dari harga real-time (TP = TP1) · klik untuk detail
       </p>
 
-      <div className="mt-2 space-y-1.5">
-        {trades.length === 0 && (
-          <p className="py-6 text-center text-xs text-mute">Belum ada sinyal yang tercatat.</p>
-        )}
+      <div className="mt-2 divide-y divide-line rounded-md border border-line">
+        {trades.length === 0 && <p className="py-6 text-center text-xs text-muted">Belum ada sinyal yang tercatat.</p>}
         {trades.map((t) => {
-          const chip = STATUS_CHIP[t.status];
+          const chip = STATUS[t.status];
           return (
             <button
               key={t.id}
               onClick={() => onSelect(t)}
-              className="w-full rounded border border-line-soft bg-ink-850/50 px-2 py-1.5 text-left text-xs transition-colors hover:border-line"
+              className="block w-full px-2.5 py-2 text-left transition-colors first:rounded-t-md last:rounded-b-md hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40"
             >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span
-                  className={`rounded px-1.5 py-0.5 text-[10px] tracking-wider ${
-                    t.direction === 'BUY' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'
-                  }`}
-                >
-                  {t.direction}
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5">
+                  <Chip tone={t.direction === 'BUY' ? 'bull' : 'bear'}>{t.direction}</Chip>
+                  <Chip tone={chip.tone}>{chip.label}</Chip>
                 </span>
-                <span className="text-mute">
-                  {fmtDateWib(t.createdAt)} · {fmtTimeWib(t.createdAt)} WIB
+                <span className={`${NUM} text-2xs text-muted`}>{fmtTimeWib(t.createdAt)} WIB</span>
+              </div>
+              <div className={`${NUM} mt-1.5 flex gap-x-3 text-xs text-fg/80`}>
+                <span>
+                  E <span className="font-medium text-fg">{fmtPrice(t.entry)}</span>
                 </span>
-              </div>
-              <div className="num mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-fg/80">
-                <span>E {fmtPrice(t.entry)}</span>
-                <span>SL {fmtPrice(t.sl)}</span>
-                <span>TP {fmtPrice(t.tp1)}</span>
-              </div>
-              <div className="mt-1">
-                <span className={`inline-block rounded border px-1.5 py-0.5 text-[10px] tracking-wider ${chip.chip}`}>
-                  {chip.label}
+                <span>
+                  SL <span className="text-bear">{fmtPrice(t.sl)}</span>
+                </span>
+                <span>
+                  TP <span className="text-bull">{fmtPrice(t.tp1)}</span>
                 </span>
               </div>
               {(t.status === 'WAITING' || t.status === 'EXPIRED') && (
-                <p className="mt-1 text-[11px] text-mute">
+                <p className="mt-1 text-2xs text-muted">
                   {t.status === 'WAITING'
-                    ? `Menunggu entry ${fmtPrice(t.entry)} · batal otomatis dalam 1 jam`
+                    ? 'Menunggu entry · batal otomatis dalam 1 jam'
                     : `Entry tak tersentuh · dibatalkan ${fmtTimeWib(t.closedAt ?? t.createdAt)} WIB`}
                 </p>
               )}
               {(t.status === 'TP_HIT' || t.status === 'SL_HIT') && t.exitPrice !== null && t.closedAt !== null && (
-                <p className="mt-1 text-[11px] text-mute">
-                  Exit {fmtPrice(t.exitPrice)} · ditutup {fmtTimeWib(t.closedAt)} WIB · confidence{' '}
-                  {fmtNum(t.confidence)}
+                <p className="mt-1 text-2xs text-muted">
+                  Exit <span className={`${NUM} text-fg/70`}>{fmtPrice(t.exitPrice)}</span> · ditutup{' '}
+                  {fmtTimeWib(t.closedAt)} WIB · konfluensi{' '}
+                  <span className={`${NUM} text-fg/70`}>{fmtNum(t.confidence)}%</span>
                 </p>
               )}
             </button>

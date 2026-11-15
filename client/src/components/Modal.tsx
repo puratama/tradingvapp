@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import { X } from 'lucide-react';
 
 interface ModalProps {
   open: boolean;
@@ -35,7 +36,7 @@ export default function Modal({ open, onClose, title, subtitle, children, size =
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/70 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-fg/25 p-4 backdrop-blur-[2px]"
       onClick={onClose}
     >
       <div
@@ -43,23 +44,23 @@ export default function Modal({ open, onClose, title, subtitle, children, size =
         aria-modal="true"
         aria-label={title}
         onClick={(e) => e.stopPropagation()}
-        className={`rise max-h-[88vh] w-full ${size} overflow-y-auto rounded-xl border border-line bg-ink-900/95 shadow-2xl`}
+        className={`rise flex max-h-[88vh] w-full ${size} flex-col overflow-hidden rounded-xl border border-line bg-white shadow-lg`}
       >
-        <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-line bg-ink-900/95 px-5 py-3.5 backdrop-blur">
-          <div>
-            <h2 className="font-display text-sm tracking-[0.25em] text-gold-soft">{title}</h2>
-            {subtitle && <p className="mt-1 text-[11px] text-mute">{subtitle}</p>}
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-line px-5 py-3.5">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-fg">{title}</h2>
+            {subtitle && <p className="mt-0.5 text-xs text-muted">{subtitle}</p>}
           </div>
           <button
             ref={closeRef}
             onClick={onClose}
             aria-label="Tutup"
-            className="shrink-0 rounded border border-line px-2 py-1 text-xs text-mute transition-colors hover:border-gold/40 hover:text-fg"
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           >
-            ✕
+            <X size={16} strokeWidth={1.75} aria-hidden />
           </button>
         </div>
-        <div className="px-5 py-4">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
       </div>
     </div>
   );

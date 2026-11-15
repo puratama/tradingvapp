@@ -1,85 +1,154 @@
 @import 'tailwindcss';
 
+/**
+ * Design tokens — single source of truth for the whole app.
+ * Light is the only theme. Every colour/scale below becomes a Tailwind
+ * utility (bg-surface, text-muted, border-line, text-bull, …).
+ */
 @theme {
-  --font-display: 'Poppins', sans-serif;
-  --font-sans: 'IBM Plex Sans', sans-serif;
-  --font-mono: 'IBM Plex Mono', monospace;
+  /* Typography */
+  --font-display: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
 
-  --color-ink-950: #0a0c10;
-  --color-ink-900: #10141b;
-  --color-ink-850: #141a23;
-  --color-ink-800: #1a212c;
-  --color-line: #242e3b;
-  --color-line-soft: #1c2531;
-  --color-fg: #e9eef6;
-  --color-mute: #808fa4;
-  --color-gold: #d8a93a;
-  --color-gold-soft: #eccb7a;
-  --color-up: #35c77d;
-  --color-down: #f0554a;
-  --color-warn: #e8963c;
+  --text-2xs: 0.6875rem; /* 11px — smallest allowed label */
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.75rem; /* 12px */
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.8125rem; /* 13px — dense table body */
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.875rem; /* 14px — body */
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 2rem;
+  --text-3xl: 2rem;
+  --text-3xl--line-height: 2.25rem;
+
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* Neutrals */
+  --color-canvas: #f8fafc;
+  --color-surface: #ffffff;
+  --color-surface-2: #f1f5f9;
+  --color-surface-3: #e9eef5;
+  --color-fg: #0f172a;
+  --color-muted: #64748b;
+  --color-faint: #94a3b8;
+  --color-line: #e2e8f0;
+  --color-line-strong: #cbd5e1;
+
+  /* Accent */
+  --color-accent: #2563eb;
+  --color-accent-soft: #dbeafe;
+  --color-accent-strong: #1d4ed8;
+
+  /* Semantic financial */
+  --color-bull: #16a34a;
+  --color-bull-soft: #dcfce7;
+  --color-bear: #dc2626;
+  --color-bear-soft: #fee2e2;
+  --color-neutral: #64748b;
+  --color-neutral-soft: #f1f5f9;
+  --color-warn: #d97706;
+  --color-warn-soft: #fef3c7;
+  --color-info: #0284c7;
+  --color-info-soft: #e0f2fe;
+
+  /* Chart */
+  --color-chart-up: #16a34a;
+  --color-chart-down: #dc2626;
+  --color-chart-grid: #eef2f7;
+  --color-chart-axis: #94a3b8;
+  --color-chart-crosshair: #94a3b8;
+  --color-chart-ema20: #2563eb;
+  --color-chart-ema50: #d97706;
+  --color-chart-ema200: #7c3aed;
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+
+  /* Shadows — minimal, one step each */
+  --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04);
+  --shadow-md: 0 1px 3px rgb(15 23 42 / 0.06), 0 4px 12px rgb(15 23 42 / 0.06);
+  --shadow-lg: 0 8px 32px rgb(15 23 42 / 0.12);
+
+  /* Component dimensions */
+  --spacing-header: 52px;
+  --spacing-toolbar: 44px;
+  --spacing-control: 28px;
+  --spacing-control-lg: 32px;
+  --spacing-rail: 60px;
+  --spacing-rail-lg: 196px;
+  --spacing-panel: 340px;
+  --spacing-row: 36px;
+  --breakpoint-nav: 64rem;
 }
 
 html {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 body {
   margin: 0;
-  background-color: var(--color-ink-950);
-  background-image:
-    radial-gradient(1100px 500px at 85% -10%, rgb(216 169 58 / 0.07), transparent 60%),
-    radial-gradient(900px 600px at -10% 110%, rgb(53 199 125 / 0.04), transparent 55%),
-    repeating-linear-gradient(0deg, rgb(255 255 255 / 0.012) 0 1px, transparent 1px 40px),
-    repeating-linear-gradient(90deg, rgb(255 255 255 / 0.012) 0 1px, transparent 1px 40px);
+  background-color: var(--color-canvas);
   color: var(--color-fg);
   font-family: var(--font-sans);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-normal);
   -webkit-font-smoothing: antialiased;
-}
-
-/* Fine grain overlay for depth */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.35;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'cv11', 'ss01';
 }
 
 ::selection {
-  background: rgb(216 169 58 / 0.35);
+  background: rgb(37 99 235 / 0.18);
 }
 
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--color-ink-950);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--color-line);
-  border-radius: 6px;
-  border: 2px solid var(--color-ink-950);
+  background: var(--color-line-strong);
+  border-radius: 8px;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: #33404f;
+
+/* Tabular numerals for every financial figure. */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
   }
 }
-
 .rise {
-  animation: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation: rise 0.2s ease-out both;
 }
 
 @keyframes pulse-dot {
@@ -91,21 +160,13 @@ body::before {
     opacity: 0.35;
   }
 }
-
 .live-dot {
   animation: pulse-dot 1.6s ease-in-out infinite;
 }
 
-@keyframes shimmer {
-  from {
-    background-position: -400px 0;
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .live-dot {
+    animation: none;
   }
-  to {
-    background-position: 400px 0;
-  }
-}
-
-.num {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
 }

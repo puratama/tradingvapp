@@ -113,8 +113,13 @@ export function useTrades() {
   return useStream<TradeRecord[]>('trades', '/api/trades');
 }
 
+/**
+ * Latest candles for a timeframe. 5000 is the bridge maximum (~10 months of
+ * H1, ~1 year of H4) so the user can pan left into real history instead of
+ * hitting the edge of a short window. Polling keeps the right edge live.
+ */
 export function useCandles(tf: TF) {
-  return usePoll<{ tf: TF; bars: Candle[] }>(`/api/candles?tf=${tf}&count=300`, 20_000);
+  return usePoll<{ tf: TF; bars: Candle[] }>(`/api/candles?tf=${tf}&count=5000`, 20_000);
 }
 
 export function useNews() {

@@ -3,9 +3,10 @@
 ## Project Overview
 
 XAUUSD Decision Desk — web app pendukung keputusan entry trading emas (XAUUSD):
-chart candle TradingView, mesin analisis konfluensi multi-timeframe (entry/SL/TP
-berbasis ATR), kalkulator risiko, dan kalender ekonomi dengan analisis dampak ke emas.
-UI berbahasa Indonesia; zona waktu tampilan WIB (`Asia/Jakarta`).
+chart candle TradingView (candle, EMA, volume, RSI/MACD dalam satu chart), mesin
+analisis konfluensi multi-timeframe (entry/SL/TP berbasis ATR), kalkulator risiko,
+dan kalender ekonomi dengan analisis dampak ke emas. UI berbahasa Indonesia dengan
+design system sendiri (light mode), zona waktu tampilan WIB (`Asia/Jakarta`).
 
 ## Architecture & Data Flow
 
@@ -42,9 +43,10 @@ dari −5 menit sampai +1 jam → verdict dipaksa `WAIT`).
 |`server/analysis/`|`indicators` (re-export dari shared), `structure`, `patterns`, `signal`|
 |`server/news/enrich.ts`|Mapping judul event → dampak ke XAUUSD (bahasa Indonesia)|
 |`mcp-bridge/`|MCP server stdio; `forexfactory.ts` = fetch feed kalender|
-|`client/src/components/`|`Chart`, `SignalPanel`, `MtfTable`, `RiskCalculator`, `NewsPanel`, `TradeHistory`|
-|`client/src/lib/`|`api.ts` (hooks polling), `format.ts` (WIB, angka, countdown)|
-|`client/src/App.tsx`|Layout utama: chart (kiri) + sidebar kanan `w-1/5` berisi tab `SINYAL` (default) / `RIWAYAT`; detail lain lewat modal toolbar|
+|`client/src/components/`|`Chart`, `SignalPanel`, `MarketReadings`, `RiskCalculator`, `NewsPanel`, `TradeHistory`, `Modal`, `DecisionModal`|
+|`client/src/ui/`|Design system: token di `index.css` (`@theme`), `AppShell` (topbar + nav rail + drawer), `Button`/`Segmented`, `Chip`/`Stat`/`Dot`, `Icon` (Lucide), `styles.ts` (recipe kelas)|
+|`client/src/lib/`|`api.ts` (hooks SSE/polling), `format.ts` (WIB, angka, countdown)|
+|`client/src/App.tsx`|Layout utama: 3 view (`Chart & Sinyal`, `Level & Indikator`, `Riwayat Trade`) dipilih dari nav rail; chart + panel keputusan kanan; detail via modal|
 
 ## Development Commands
 
@@ -114,6 +116,25 @@ Konfigurasi: salin `.env.example` → `.env` (gitignored). Variabel: `PORT`
 - **UI/teks**: string user-facing berbahasa Indonesia (alasan, peringatan, label);
   harga diformat 2 desimal (`fmtPrice`), waktu WIB via `Intl.DateTimeFormat`
   dengan `timeZone: 'Asia/Jakarta'`.
+- **Design system**: token tunggal di `client/src/index.css` (`@theme`) —
+  warna `canvas/surface/surface-2/3`, `fg/muted/faint/line/line-strong`,
+  `accent(-soft/-strong)`, semantik finansial `bull/bear/neutral/warn/info`
+  (+`-soft`), serta `chart-*`. Light mode satu-satunya tema. Tipografi Inter
+  (display/body) + JetBrains Mono (angka, lewat kelas `num`); ukuran terkecil
+  `text-2xs` (11px) — jangan pakai `text-[10px]`. Radius 6/8/10/12px,
+  shadow `sm/md/lg`, spacing kelipatan 4px, dimensi komponen lewat
+  `--spacing-header/toolbar/rail/rail-lg/panel`.
+- **Komponen UI**: pakai `client/src/ui/` — `Button` (varian `ghost/selected/
+  primary/outline`, `pressed` → `aria-pressed`), `Segmented` untuk tablist,
+  `Chip`/`Dot`/`Stat` dengan tipe `Tone`, `Icon` (Lucide, stroke 1.75 baku —
+  **jangan campur icon library lain**), `AppShell`/`PageHeader`. Jangan
+  menulis ulang resep kelas; tambahkan di `ui/styles.ts`.
+- **Aksesibilitas**: kontrol toggle wajib `aria-pressed`/`aria-current`,
+  fokus memakai `FOCUS` (ring `accent/40`), ikon dekoratif `aria-hidden`.
+  Jangan `outline-none` tanpa pengganti.
+- **Angka finansial**: selalu kelas `NUM` (`font-variant-numeric:
+  tabular-nums`), rata kanan di tabel, positif `text-bull`, negatif
+  `text-bear`.
 - **Prinsip produk**: setiap keputusan WAJIB disertai daftar `reasons` dan
   `warnings` yang bisa dibaca manusia — jangan menghasilkan verdict tanpa
   penjelasan (lihat `computeAnalysis`).
@@ -155,15 +176,27 @@ Konfigurasi: salin `.env.example` → `.env` (gitignored). Variabel: `PORT`
   memakai variabel standar `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`.
 - `server/trades.test.ts` — self-check assert (`npx tsx server/trades.test.ts`)
   untuk `resolveTrade`: fill limit, gap SL, mirror BUY/SELL, harga tidak sah.
-- `client/src/components/Chart.tsx` — lightweight-charts v5
-  (`addSeries(CandlestickSeries)`, `createSeriesMarkers`, price line ENTRY/SL/TP).
-  **Jangan `fitContent()` di setiap update data**: `useCandles` poll 20 dtk, jadi
-  viewport disimpan (`getVisibleRange`/`setVisibleRange`, berbasis waktu bukan index
-  logis) dan hanya di-refit saat `dataTf` berubah — prop itu menandai TF milik
-  dataset, bukan TF terpilih, karena saat switch data lama masih terpasang.
+- `client/src/components/Chart.tsx` — lightweight-charts v5, **satu chart**
+  untuk candle + EMA + volume + RSI/MACD. Indikator memakai price scale
+  overlay tersembunyi (`priceScaleId: 'volume'|'rsi'|'macd'`) yang ditumpuk
+  dari bawah lewat `scaleMargins`; margin skala utama ikut menyesuaikan.
+  **Jangan pisahkan RSI/MACD ke chart kedua** dan jangan dua-arahkan
+  `setVisibleLogicalRange` — chart kedua yang tersembunyi (lebar 0) memancarkan
+  rentang cacat balik ke chart harga sehingga candle menyempit (regresi nyata).
+  Jangan pula pasang pane indikator sebagai overlay (`absolute bottom-0`) atau
+  bongkar container DOM-nya secara kondisional: chart dibuat sekali dalam satu
+  effect, jadi container wajib selalu ter-mount.
+  **Jangan `fitContent()` di setiap update data**: `useCandles` poll 20 dtk dan
+  memuat 5000 bar (batas bridge) agar histori bisa di-pan; viewport disimpan via
+  `getVisibleLogicalRange`/`setVisibleLogicalRange` dan hanya di-refit saat
+  `dataTf` berubah — prop itu menandai TF milik dataset, bukan TF terpilih.
+- `client/src/components/SignalPanel.tsx` — panel keputusan dengan hierarki
+  tetap: verdict → aksi → tangga level (TP2/TP1/Entry/harga/SL) → RR → gate
+  news → alasan. `compact` menukar daftar alasan dengan tombol ke modal.
 - `vite.config.ts` — root `client/`, plugin react + tailwindcss, proxy `/api`.
-- `client/src/index.css` — token tema Tailwind v4 (`@theme`: `ink-*`, `gold`, `up`,
-  `down`, `warn`; font heading `Poppins`, body `IBM Plex Sans`, angka `IBM Plex Mono`).
+- `client/src/index.css` — satu-satunya sumber token Tailwind v4 (`@theme`).
+  Warna/ukuran/font/radius/shadow didefinisikan di sini; jangan menambah warna
+  ad-hoc di komponen.
 
 ## Runtime & Tooling Preferences
 
@@ -178,7 +211,9 @@ Konfigurasi: salin `.env.example` → `.env` (gitignored). Variabel: `PORT`
 - Windows-friendly: spawn bridge memakai `process.execPath` (node), bukan `npx`.
 - Dependensi runtime inti: `express`, `@modelcontextprotocol/sdk` (1.x, pasangan
   `zod` 3.x), `@mathieuc/tradingview`, `pg` (pool Postgres), `react` 18,
-  `lightweight-charts` 5.
+  `lightweight-charts` 5, `lucide-react` (satu-satunya icon library).
+- Font dimuat dari Google Fonts di `client/index.html`: Inter (display/body) dan
+  JetBrains Mono (angka). Jangan menambah family baru tanpa alasan kuat.
 - Data candle memakai endpoint internal TradingView yang **tidak resmi** —
   antisipasi perubahan API; semua aksesnya terisolasi di `mcp-bridge/`.
 
@@ -197,6 +232,12 @@ Konfigurasi: salin `.env.example` → `.env` (gitignored). Variabel: `PORT`
 - QA yang ada saat ini: `npm run typecheck` (wajib hijau sebelum selesai),
   self-check `npx tsx server/trades.test.ts` (wajib hijau), smoke manual via
   curl `/api/analysis` + `/api/trades` dan verifikasi UI di browser.
+- **Verifikasi UI wajib di browser**, bukan hanya typecheck: buka dev server,
+  cek console error, lalu ukur dengan `getBoundingClientRect()` (lebar chart,
+  panel, posisi ikon rail) di 1440×900, 1024×768, dan 390×844 — termasuk
+  `document.documentElement.scrollWidth > innerWidth` untuk overflow.
+  Toggle tiap kontrol (EMA/Vol/RSI/MACD, nav rail hover & pin) dan pastikan
+  ukuran chart tidak berubah saat indikator dinyalakan.
 - Smoke test pola yang terbukti: `callTool` dari `server/mcp.ts` dalam skrip
   `tsx` sementara, cek bentuk respons tool bridge, lalu hapus skripnya.
 

@@ -48,30 +48,32 @@ export default function DecisionModal({ open, onClose }: { open: boolean; onClos
     <Modal
       open={open}
       onClose={onClose}
-      title="CARA KERJA KEPUTUSAN ENTRY"
-      subtitle="Mesin analisis konfluensi multi-timeframe — deterministic, bukan AI"
+      title="Cara kerja keputusan entry"
+      subtitle="Mesin analisis konfluensi multi-timeframe — deterministik, bukan AI"
       size="max-w-2xl"
     >
       <ol className="space-y-3">
         {RULES.map((r) => (
           <li key={r.no} className="flex gap-3">
-            <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-gold/40 text-[10px] text-gold-soft">
+            <span className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent-soft text-2xs font-semibold text-accent">
               {r.no}
             </span>
             <div>
-              <h4 className="text-xs font-semibold tracking-wider text-fg">{r.title}</h4>
-              <p className="mt-1 text-xs leading-relaxed text-mute">{r.body}</p>
+              <h4 className="text-xs font-semibold text-fg">{r.title}</h4>
+              <p className="mt-1 text-xs leading-relaxed text-muted">{r.body}</p>
             </div>
           </li>
         ))}
       </ol>
 
-      <h3 className="mt-6 border-t border-line pt-4 text-[10px] tracking-[0.22em] text-mute">TENTANG AI</h3>
+      <h3 className="mt-6 border-t border-line pt-4 text-xs font-semibold uppercase tracking-[0.08em] text-muted">
+        Tentang AI
+      </h3>
       <div className="mt-3 space-y-3">
         {ANSWERS.map((qa) => (
           <div key={qa.q}>
-            <h4 className="text-xs font-semibold tracking-wider text-fg">{qa.q}</h4>
-            <p className="mt-1 text-xs leading-relaxed text-mute">{qa.a}</p>
+            <h4 className="text-xs font-semibold text-fg">{qa.q}</h4>
+            <p className="mt-1 text-xs leading-relaxed text-muted">{qa.a}</p>
           </div>
         ))}
       </div>

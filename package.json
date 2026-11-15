@@ -17,6 +17,7 @@
     "cross-env": "^7.0.3",
     "express": "^4.21.0",
     "lightweight-charts": "^5.0.0",
+    "lucide-react": "^1.73.0",
     "pg": "^8.23.1",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
