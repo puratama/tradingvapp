@@ -1,0 +1,9 @@
+node_modules
+client/dist
+prisma/generated
+.env
+.env.*
+!.env.example
+*.log
+data
+.git

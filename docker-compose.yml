@@ -1,0 +1,75 @@
+# ============================================================
+# XAUUSD Decision Desk — stack: setup DB + app
+#
+# Reverse proxy: Traefik EKSTERNAL (dijalankan terpisah) pada network
+# external `internet-net`. TLS/HTTPS ditangani Cloudflare.
+#
+# Database: Postgres SUDAH ADA di host VPS (di luar Docker). App menjangkau
+# via `host.docker.internal` (extra_hosts: host-gateway) → port 5432.
+# Pastikan Postgres host: listen_addresses bukan cuma localhost,
+# pg_hba.conf izinkan subnet Docker (172.16.0.0/12), firewall buka 5432.
+#
+# Network:
+#   - `database-net` : external, jalur app ↔ host Postgres.
+#   - `internet-net` : external, hanya `app` attach — jalur app ↔ Traefik.
+#
+# Syarat:
+#   docker network create database-net
+#   docker network create internet-net
+#   Traefik host attach ke `internet-net` dengan entrypoint `web`.
+#   `.env.production` berisi APP_DOMAIN, DB_HOST (default host.docker.internal),
+#   DB_USERNAME, DB_PASSWORD, DB_DATABASE.
+#
+# Jalankan:  docker compose --env-file .env.production up -d --build
+# Skema DB disiapkan service `db-setup` (prisma db push, sekali, sebelum app).
+# ============================================================
+
+services:
+  # One-off: terapkan skema Prisma ke Postgres host (tanpa migration history).
+  db-setup:
+    build:
+      context: .
+      target: build
+    container_name: tradingv-migrate
+    env_file: .env.production
+    environment:
+      DATABASE_URL: postgresql://${DB_USERNAME:-tradingv-user}:${DB_PASSWORD:?set DB_PASSWORD in .env.production}@${DB_HOST:-host.docker.internal}:5432/${DB_DATABASE:-tradingv-db}?schema=public
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    entrypoint: ["npx", "prisma", "db", "push", "--skip-generate"]
+    networks:
+      - database-net
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      target: runtime
+    container_name: tradingv-app
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      DATABASE_URL: postgresql://${DB_USERNAME:-tradingv-user}:${DB_PASSWORD:?set DB_PASSWORD in .env.production}@${DB_HOST:-host.docker.internal}:5432/${DB_DATABASE:-tradingv-db}?schema=public
+      PORT: 3001
+      HOST: 0.0.0.0
+    depends_on:
+      db-setup:
+        condition: service_completed_successfully
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=internet-net"
+      - "traefik.http.routers.desk.rule=Host(`${APP_DOMAIN:?set APP_DOMAIN in .env.production}`)"
+      - "traefik.http.services.desk.loadbalancer.server.port=3001"
+      - "traefik.http.routers.desk.entrypoints=web"
+    networks:
+      - database-net
+      - internet-net
+
+networks:
+  database-net:
+    external: true
+
+  internet-net:
+    external: true

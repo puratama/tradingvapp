@@ -14,6 +14,7 @@ import { TIMEFRAMES } from '../shared/types.js';
 import type { Analysis, Candle, NewsEvent, Quote, TF } from '../shared/types.js';
 
 const PORT = Number(process.env.PORT ?? 3001);
+const HOST = process.env.HOST ?? '127.0.0.1';
 const SYMBOL = process.env.XAUUSD_SYMBOL ?? 'OANDA:XAUUSD';
 const TF_INTERVAL: Record<TF, string> = { M5: '5m', M15: '15m', H1: '1h', H4: '4h', D1: '1D' };
 const BARS_FOR_ANALYSIS = 300;
@@ -321,6 +322,6 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
   res.status(500).json({ error: message });
 });
 
-app.listen(PORT, '127.0.0.1', () => {
-  console.error(`[api] XAUUSD Decision Desk listening on http://127.0.0.1:${PORT} (symbol ${SYMBOL})`);
+app.listen(PORT, HOST, () => {
+  console.error(`[api] XAUUSD Decision Desk listening on http://${HOST}:${PORT} (symbol ${SYMBOL})`);
 });
