@@ -5,9 +5,10 @@
 # external `internet-net`. TLS/HTTPS ditangani Cloudflare.
 #
 # Database: Postgres SUDAH ADA di host VPS (di luar Docker). App menjangkau
-# via `host.docker.internal` (extra_hosts: host-gateway) → port 5432.
+# via `host.docker.internal` (extra_hosts: host-gateway) → port DB_PORT
+# (default 5432, override di .env.production).
 # Pastikan Postgres host: listen_addresses bukan cuma localhost,
-# pg_hba.conf izinkan subnet Docker (172.16.0.0/12), firewall buka 5432.
+# pg_hba.conf izinkan subnet Docker (172.16.0.0/12), firewall buka DB_PORT.
 #
 # Network:
 #   - `database-net` : external, jalur app ↔ host Postgres.
@@ -33,7 +34,7 @@ services:
     container_name: tradingv-migrate
     env_file: .env.production
     environment:
-      DATABASE_URL: postgresql://${DB_USERNAME:-tradingv-user}:${DB_PASSWORD:?set DB_PASSWORD in .env.production}@${DB_HOST:-host.docker.internal}:5432/${DB_DATABASE:-tradingv-db}?schema=public
+      DATABASE_URL: postgresql://${DB_USERNAME:-tradingv-user}:${DB_PASSWORD:?set DB_PASSWORD in .env.production}@${DB_HOST:-host.docker.internal}:${DB_PORT:-5432}/${DB_DATABASE:-tradingv-db}?schema=public
     extra_hosts:
       - "host.docker.internal:host-gateway"
     entrypoint: ["npx", "prisma", "db", "push", "--skip-generate"]
@@ -49,7 +50,7 @@ services:
     restart: unless-stopped
     env_file: .env.production
     environment:
-      DATABASE_URL: postgresql://${DB_USERNAME:-tradingv-user}:${DB_PASSWORD:?set DB_PASSWORD in .env.production}@${DB_HOST:-host.docker.internal}:5432/${DB_DATABASE:-tradingv-db}?schema=public
+      DATABASE_URL: postgresql://${DB_USERNAME:-tradingv-user}:${DB_PASSWORD:?set DB_PASSWORD in .env.production}@${DB_HOST:-host.docker.internal}:${DB_PORT:-5432}/${DB_DATABASE:-tradingv-db}?schema=public
       PORT: 3001
       HOST: 0.0.0.0
     depends_on:
