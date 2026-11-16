@@ -1,48 +1,49 @@
 /**
  * Trade history: BUY/SELL signals recorded as trackable trades, resolved
- * against live quotes (TP target = tp1). Persistence: PostgreSQL via `pg`.
- * Connection comes from the standard PG* variables, loaded from .env by
- * server/env.ts (see .env.example).
+ * against live quotes (TP target = tp1). Persistence: PostgreSQL via Prisma
+ * (schema: prisma/schema.prisma, model Trade → table `trades`). Connection via
+ * DATABASE_URL from .env, loaded by server/env.ts (see .env.example).
  */
 import { randomUUID } from 'node:crypto';
-import pg from 'pg';
+import { PrismaClient } from '../prisma/generated/client.js';
+import { PrismaPg } from '@prisma/adapter-pg';
 import type { Analysis, PlanAction, Quote, TradeRecord } from '../shared/types.js';
 
 /** Unfilled orders expire after one hour — otherwise a pending limit the price
  *  never reaches blocks every same-direction signal forever. */
 export const WAITING_TTL_SEC = 60 * 60;
 
-const OPEN_STATUSES = "('WAITING', 'RUNNING')";
+const OPEN_STATUSES = ['WAITING', 'RUNNING'];
 
-export interface TradeRow {
+/** Wire shape of the Prisma `Trade` model (BIGINT columns come back as bigint). */
+interface RawTrade {
   id: string;
-  created_at: string | number;
-  closed_at: string | number | null;
+  createdAt: bigint;
+  closedAt: bigint | null;
   status: string;
   direction: string;
   entry: number;
   sl: number;
   tp1: number;
   tp2: number | null;
-  filled: boolean | number;
-  exit_price: number | null;
+  filled: boolean;
+  exitPrice: number | null;
   confidence: number;
-  setup_type: string;
+  setupType: string;
   action: string;
   reasons: string;
 }
 
-/** pg returns BIGINT columns as strings — normalise to seconds. */
-function toSec(v: string | number | null): number {
-  if (v === null) return 0;
-  return typeof v === 'number' ? v : Number(v);
+/** BIGINT columns arrive as bigint — normalise to seconds. */
+function toSec(v: bigint | number | null): number {
+  return v === null ? 0 : Number(v);
 }
 
-function toRecord(r: TradeRow): TradeRecord {
+function toRecord(r: RawTrade): TradeRecord {
   return {
     id: r.id,
-    createdAt: toSec(r.created_at),
-    closedAt: r.closed_at === null ? null : toSec(r.closed_at),
+    createdAt: toSec(r.createdAt),
+    closedAt: toSec(r.closedAt),
     status: r.status as TradeRecord['status'],
     direction: r.direction as TradeRecord['direction'],
     action: JSON.parse(r.action) as PlanAction,
@@ -50,93 +51,53 @@ function toRecord(r: TradeRow): TradeRecord {
     sl: Number(r.sl),
     tp1: Number(r.tp1),
     tp2: r.tp2 === null ? null : Number(r.tp2),
-    filled: r.filled === true || Number(r.filled) === 1,
-    exitPrice: r.exit_price === null ? null : Number(r.exit_price),
+    filled: r.filled === true,
+    exitPrice: r.exitPrice === null ? null : Number(r.exitPrice),
     confidence: Number(r.confidence),
-    setupType: r.setup_type,
+    setupType: r.setupType,
     reasons: JSON.parse(r.reasons) as string[],
   };
 }
 
-const pool = new pg.Pool({
-  host: process.env.PGHOST ?? '127.0.0.1',
-  port: Number(process.env.PGPORT ?? 5432),
-  user: process.env.PGUSER ?? 'postgres',
-  password: process.env.PGPASSWORD ?? 'postgres',
-  database: process.env.PGDATABASE ?? 'tradingvapp',
-});
-pool.on('error', (err) => console.error('[trades] pool error:', err.message));
-
-let ready: Promise<void> | null = null;
-
-/** Create the schema once per process. */
-function ensureSchema(): Promise<void> {
-  ready ??= pool
-    .query(`
-      CREATE TABLE IF NOT EXISTS trades (
-        id TEXT PRIMARY KEY,
-        created_at BIGINT NOT NULL,
-        closed_at BIGINT,
-        status TEXT NOT NULL,
-        direction TEXT NOT NULL,
-        entry DOUBLE PRECISION NOT NULL,
-        sl DOUBLE PRECISION NOT NULL,
-        tp1 DOUBLE PRECISION NOT NULL,
-        tp2 DOUBLE PRECISION,
-        filled BOOLEAN NOT NULL,
-        exit_price DOUBLE PRECISION,
-        confidence DOUBLE PRECISION NOT NULL,
-        setup_type TEXT NOT NULL,
-        action TEXT NOT NULL,
-        reasons TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS trades_status_dir ON trades (status, direction);
-    `)
-    .then(() => undefined)
-    .catch((err) => {
-      ready = null; // let the next call retry instead of caching a dead promise
-      throw err;
-    });
-  return ready;
+// Lazy: the self-check (server/trades.test.ts) imports the pure resolveTrade
+// and must run without DATABASE_URL or a live DB.
+let client: PrismaClient | null = null;
+function db(): PrismaClient {
+  return (client ??= new PrismaClient({
+    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+  }));
 }
 
 async function persist(t: TradeRecord): Promise<void> {
-  await pool.query(
-    `INSERT INTO trades (id, created_at, closed_at, status, direction, entry, sl, tp1, tp2,
-                         filled, exit_price, confidence, setup_type, action, reasons)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-     ON CONFLICT (id) DO UPDATE SET
-       closed_at = EXCLUDED.closed_at,
-       status = EXCLUDED.status,
-       filled = EXCLUDED.filled,
-       exit_price = EXCLUDED.exit_price`,
-    [
-      t.id,
-      t.createdAt,
-      t.closedAt,
-      t.status,
-      t.direction,
-      t.entry,
-      t.sl,
-      t.tp1,
-      t.tp2,
-      t.filled,
-      t.exitPrice,
-      t.confidence,
-      t.setupType,
-      JSON.stringify(t.action),
-      JSON.stringify(t.reasons),
-    ],
-  );
+  await db().trade.upsert({
+    where: { id: t.id },
+    create: {
+      id: t.id,
+      createdAt: t.createdAt,
+      closedAt: t.closedAt,
+      status: t.status,
+      direction: t.direction,
+      entry: t.entry,
+      sl: t.sl,
+      tp1: t.tp1,
+      tp2: t.tp2,
+      filled: t.filled,
+      exitPrice: t.exitPrice,
+      confidence: t.confidence,
+      setupType: t.setupType,
+      action: JSON.stringify(t.action),
+      reasons: JSON.stringify(t.reasons),
+    },
+    update: { closedAt: t.closedAt, status: t.status, filled: t.filled, exitPrice: t.exitPrice },
+  });
 }
 
 /**
  * Pure: advance one trade with the latest price (Unix seconds for close time).
- * Unfilled orders expire after WAITING_TTL_SEC; until then they stay WAITING
- * and only turn RUNNING once price touches entry — a gap past SL counts as
- * filled + stopped. Expiry is checked before the price guard so a dead feed
- * cannot keep a lapsed order alive. TP and SL sit on opposite sides of entry,
- * so a single price never matches both.
+ * ORDERING INVARIANTS — cash-settled XAUUSD, broker feed, no OHLC:
+ *  - an expired unfilled order becomes EXPIRED before any price check
+ *  - an invalid price (absent or <= 0) resolves nothing but still expires
+ *  - a filled position that takes both SL and TP on the same tick takes SL
  */
 export function resolveTrade(trade: TradeRecord, price: number, nowSec: number): TradeRecord {
   if (trade.status !== 'WAITING' && trade.status !== 'RUNNING') return trade;
@@ -164,8 +125,9 @@ export function resolveTrade(trade: TradeRecord, price: number, nowSec: number):
  *  true when any trade changed. */
 export async function resolveTrades(quote: Quote | null, nowSec: number): Promise<boolean> {
   const price = quote?.last ?? 0;
-  await ensureSchema();
-  const { rows } = await pool.query<TradeRow>(`SELECT * FROM trades WHERE status IN ${OPEN_STATUSES}`);
+  const rows = (await db().trade.findMany({
+    where: { status: { in: OPEN_STATUSES } },
+  })) as RawTrade[];
   let changed = false;
   for (const row of rows) {
     const trade = toRecord(row);
@@ -185,12 +147,11 @@ export async function resolveTrades(quote: Quote | null, nowSec: number): Promis
 export async function recordSignal(analysis: Analysis, nowSec: number): Promise<TradeRecord | null> {
   const { plan } = analysis;
   if (plan.verdict === 'WAIT' || plan.entry === null || plan.sl === null || plan.tp1 === null) return null;
-  await ensureSchema();
-  const open = await pool.query(
-    `SELECT 1 FROM trades WHERE status IN ${OPEN_STATUSES} AND direction = $1 LIMIT 1`,
-    [plan.verdict],
-  );
-  if (open.rowCount) return null;
+  const open = await db().trade.findFirst({
+    where: { status: { in: OPEN_STATUSES }, direction: plan.verdict },
+    select: { id: true },
+  });
+  if (open) return null;
   const trade: TradeRecord = {
     id: randomUUID(),
     createdAt: nowSec,
@@ -214,7 +175,6 @@ export async function recordSignal(analysis: Analysis, nowSec: number): Promise<
 
 /** Newest first. */
 export async function listTrades(): Promise<TradeRecord[]> {
-  await ensureSchema();
-  const { rows } = await pool.query<TradeRow>('SELECT * FROM trades ORDER BY created_at DESC');
+  const rows = (await db().trade.findMany({ orderBy: { createdAt: 'desc' } })) as RawTrade[];
   return rows.map(toRecord);
 }

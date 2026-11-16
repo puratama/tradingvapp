@@ -60,7 +60,7 @@ npm run typecheck  # tsc --noEmit untuk project server DAN client
 
 Konfigurasi: salin `.env.example` → `.env` (gitignored). Variabel: `PORT`
 (default `3001`, bind `127.0.0.1` saja), `XAUUSD_SYMBOL` (default
-`OANDA:XAUUSD`), `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`,
+`OANDA:XAUUSD`), `DATABASE_URL` (Postgres, dipakai Prisma),
 `NODE_ENV=production` mengaktifkan serve `client/dist`.
 
 ## Code Conventions & Common Patterns
@@ -83,7 +83,7 @@ Konfigurasi: salin `.env.example` → `.env` (gitignored). Variabel: `PORT`
   (single-flight), dihitung ulang lebih awal bila harga bergeser ≥ 0.2×ATR H1
   (interval minimum 8 dtk).
 - **Trade history**: `server/trades.ts` — sinyal BUY/SELL otomatis jadi
-  `TradeRecord` (persist **PostgreSQL**, `pg` Pool, variabel `PG*` dari `.env`);
+  `TradeRecord` (persist **PostgreSQL** via Prisma — model `Trade`);
   `resolveTrade` murni = test seam utama riwayat. Status:
   `WAITING` (order limit/stop, entry belum tersentuh) → `RUNNING` (entry
   terisi) → `TP_HIT`/`SL_HIT`; `action.kind === 'MARKET'` langsung `RUNNING`.
@@ -168,12 +168,16 @@ Konfigurasi: salin `.env.example` → `.env` (gitignored). Variabel: `PORT`
   `resolveTrades`, `listTrades`; **semua async** (persist PostgreSQL).
 - **DB**: tabel `trades` (kolom snake_case: `created_at`/`closed_at` BIGINT detik,
   `filled` BOOLEAN, `exit_price`, `setup_type`, `action`/`reasons` = JSON string)
-  + index `trades_status_dir`; skema dibuat sekali per proses (`ensureSchema`).
-  `resolveTrade` tetap murni sehingga self-check jalan tanpa DB.
+  + index `trades_status_dir`; skema dikelola Prisma (`prisma/schema.prisma`,
+  model `Trade`), diterapkan via `npx prisma db push` / `prisma migrate`;
+  koneksi CLI lewat `prisma7.config.ts` (me-load `.env` yang sama).
+  Client digenerate ke `prisma/generated` (di-gitignore) — `npx prisma generate`
+  WAJIB sebelum typecheck/start. `resolveTrade` tetap murni sehingga self-check
+  jalan tanpa DB (client Prisma lazy, dibuat saat query pertama).
 - **Env**: `.env` di root repo (gitignored, template `.env.example`) dibaca oleh
   `server/env.ts` (`process.loadEnvFile`) yang WAJIB di-import pertama di
   `server/index.ts` — modul lain membaca `process.env` saat load. Koneksi DB
-  memakai variabel standar `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`.
+  memakai `DATABASE_URL`.
 - `server/trades.test.ts` — self-check assert (`npx tsx server/trades.test.ts`)
   untuk `resolveTrade`: fill limit, gap SL, mirror BUY/SELL, harga tidak sah.
 - `client/src/components/Chart.tsx` — lightweight-charts v5, **satu chart**
@@ -210,7 +214,7 @@ Konfigurasi: salin `.env.example` → `.env` (gitignored). Variabel: `PORT`
 - `tsc` dipakai hanya untuk typecheck (`--noEmit`), bukan kompilasi.
 - Windows-friendly: spawn bridge memakai `process.execPath` (node), bukan `npx`.
 - Dependensi runtime inti: `express`, `@modelcontextprotocol/sdk` (1.x, pasangan
-  `zod` 3.x), `@mathieuc/tradingview`, `pg` (pool Postgres), `react` 18,
+  `zod` 3.x), `@mathieuc/tradingview`, `@prisma/client` 7 + `@prisma/adapter-pg`, `react` 18,
   `lightweight-charts` 5, `lucide-react` (satu-satunya icon library).
 - Font dimuat dari Google Fonts di `client/index.html`: Inter (display/body) dan
   JetBrains Mono (angka). Jangan menambah family baru tanpa alasan kuat.

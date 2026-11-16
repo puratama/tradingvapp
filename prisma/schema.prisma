@@ -1,0 +1,31 @@
+// Skema tabel `trades` — mirror dari DDL yang dulu dibuat `ensureSchema` di
+// server/trades.ts. Kelola perubahan lewat `prisma db push` / `prisma migrate`.
+generator client {
+  provider = "prisma-client"
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Trade {
+  id         String  @id
+  createdAt  BigInt  @map("created_at")
+  closedAt   BigInt? @map("closed_at")
+  status     String
+  direction  String
+  entry      Float
+  sl         Float
+  tp1        Float
+  tp2        Float?
+  filled     Boolean
+  exitPrice  Float?  @map("exit_price")
+  confidence Float
+  setupType  String  @map("setup_type")
+  action     String // JSON string PlanAction
+  reasons    String // JSON string string[]
+
+  @@index([status, direction], map: "trades_status_dir")
+  @@map("trades")
+}
