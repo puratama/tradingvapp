@@ -37,7 +37,7 @@ services:
       DATABASE_URL: postgresql://${DB_USERNAME:-tradingv-user}:${DB_PASSWORD:?set DB_PASSWORD in .env.production}@${DB_HOST:-host.docker.internal}:${DB_PORT:-5432}/${DB_DATABASE:-tradingv-db}?schema=public
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    entrypoint: ["npx", "prisma", "db", "push", "--skip-generate"]
+    entrypoint: ["npx", "prisma", "db", "push"]
     networks:
       - database-net
     restart: "no"
