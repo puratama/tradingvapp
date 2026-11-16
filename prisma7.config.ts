@@ -1,7 +1,11 @@
 // Konfigurasi Prisma 7 — koneksi DB untuk CLI (db push / migrate).
 // Skema: prisma/schema.prisma. Runtime memakai PrismaPg + DATABASE_URL
 // (lihat server/trades.ts).
-process.loadEnvFile();
+try {
+  process.loadEnvFile(); // optional: container/CI provides the real env
+} catch (err) {
+  if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+}
 
 import { defineConfig } from 'prisma/config';
 
