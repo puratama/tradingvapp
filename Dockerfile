@@ -21,6 +21,8 @@ COPY server ./server
 COPY shared ./shared
 COPY mcp-bridge ./mcp-bridge
 COPY prisma ./prisma
+# prisma/generated is gitignored, so it only exists in the build stage.
+COPY --from=build /app/prisma/generated ./prisma/generated
 COPY tsconfig.json prisma7.config.ts ./
 EXPOSE 3001
 CMD ["npx", "tsx", "server/index.ts"]
