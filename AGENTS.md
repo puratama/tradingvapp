@@ -2,260 +2,248 @@
 
 ## Project Overview
 
-XAUUSD Decision Desk — web app pendukung keputusan entry trading emas (XAUUSD):
-chart candle TradingView (candle, EMA, volume, RSI/MACD dalam satu chart), mesin
-analisis konfluensi multi-timeframe (entry/SL/TP berbasis ATR), kalkulator risiko,
-dan kalender ekonomi dengan analisis dampak ke emas. UI berbahasa Indonesia dengan
-design system sendiri (light mode), zona waktu tampilan WIB (`Asia/Jakarta`).
+**XAUUSD Decision Desk** — web app pendukung keputusan entry trading emas:
+satu chart candle (candle + EMA + volume + RSI/MACD), mesin konfluensi
+multi-timeframe yang mengeluarkan rencana entry/SL/TP berbasis ATR, kalkulator
+ukuran posisi, riwayat trade otomatis, dan kalender ekonomi dengan analisis
+dampak ke emas.
+
+Dua gaya entry dari satu mesin: `swing` (stop dari ATR H1) dan `scalp` (stop
+dari ATR M5). UI berbahasa Indonesia, design system sendiri (light mode saja),
+waktu tampil WIB (`Asia/Jakarta`).
 
 ## Architecture & Data Flow
 
 ```
-client/  (Vite + React + TS + Tailwind v4 + lightweight-charts)
-   │  fetch /api/* + SSE /api/stream  (polling hooks + push realtime)
-server/  (Express + mesin analisis)
-   │  MCP JSON-RPC + notifikasi (quote stream) via stdio
-mcp-bridge/  (MCP server "tradingview-lite", di-spawn sebagai child process)
-   ├── @mathieuc/tradingview → candle/quote/rating (websocket internal TradingView)
-   └── ForexFactory JSON    → kalender ekonomi
+client/    React 18 + Vite + Tailwind v4 + lightweight-charts v5
+   │  fetch /api/*        + EventSource /api/stream
+server/    Express (tsx, tanpa build step)
+   │  MCP JSON-RPC over stdio (+ notifikasi quote)
+mcp-bridge/ MCP server "tradingview-lite" (child process)
+   ├── @mathieuc/tradingview  → candle / quote / rating
+   └── ForexFactory JSON      → kalender ekonomi
 ```
 
-Aliran data: `client/src/lib/api.ts` → REST `server/index.ts` (dan push SSE
-`/api/stream`: quote per tick, analisis saat berubah, trade saat status berubah)
-→ `server/mcp.ts` (MCP client + cache TTL + listener notifikasi) →
-`mcp-bridge/index.ts` (tool `get_ohlcv`, `get_quote`, `subscribe_quote`,
-`search_symbol`, `get_technical_analysis`, `get_economic_calendar`) → sumber data.
-Nama tool bridge sengaja kompatibel dengan MCP resmi TradingView
-(`https://mcp.tradingview.com/mcp`) agar backend bisa dialihkan tanpa mengubah engine.
+Aliran: `client/src/lib/api.ts` → `server/index.ts` (REST + SSE) →
+`server/mcp.ts` (`callTool`, cache TTL, listener notifikasi) →
+`mcp-bridge/index.ts` → sumber data.
 
-Mesin analisis (`server/analysis/signal.ts`) menggabungkan: snapshot tren per TF
-(EMA20/50/200, RSI14, MACD, ATR14, struktur swing), bias berbobot
-D1:H4:H1:M15:M5 = 3:3:2:1:1, skor konfluensi (tren, momentum, pullback vs EMA20 H1,
-pola candle, rating TradingView, level struktur), dan gate berita (event high-impact
-dari −5 menit sampai +1 jam → verdict dipaksa `WAIT`).
+Push SSE `/api/stream`: `quote` (per tick, dedupe `last/bid/ask`), `analysis`
+(saat berubah), `trades` (saat status berubah). Heartbeat `: hb` tiap 5 tick
+(`QUOTE_TICK_MS = 3000`). Ticker berhenti saat subscriber habis; snapshot
+quote+analysis dikirim saat klien connect.
+
+Mesin (`server/analysis/signal.ts` → `computeAnalysis`):
+
+1. Snapshot per TF: EMA20/50/200, RSI14, MACD hist, ATR14, struktur swing.
+2. Bias = rata-rata berbobot `trendScore`.
+   - `swing`: D1:H4:H1:M15:M5 = 3:3:2:1:1, basis ATR **H1**
+   - `scalp`: D1:H4:H1:M15:M5:M1 = 1:1:2:2:3:1, basis ATR **M5**
+   - `|bias| < 0.25` → tidak ada arah → `WAIT`
+3. Skor konfluensi (maks ~8 poin): keselarasan H4+H1 (±2/±1), konteks D1,
+   RSI H1, slope MACD H1, jarak ke EMA20 H1, pola candle, rating TradingView,
+   level struktur terdekat.
+   - `≥3` → arah; `==2` → arah + peringatan; `<3` → `WAIT`
+   - `confidence = clamp(round(50 + 6.5×skor), 10, 95)`
+4. Gate berita: event High-impact memaksa `WAIT` + `action.kind = 'HOLD'`
+   (jendela `swing` 3600 s, `scalp` 900 s).
 
 ## Key Directories
 
 |Path|Purpose|
 |---|---|
-|`shared/`|Tipe domain (`types.ts`) + indikator murni (`indicators.ts`) — dipakai server & client|
-|`server/`|Express REST API, MCP client, engine analisis, riwayat trade (`trades.ts`), enrichment berita|
-|`server/analysis/`|`indicators` (re-export dari shared), `structure`, `patterns`, `signal`|
-|`server/news/enrich.ts`|Mapping judul event → dampak ke XAUUSD (bahasa Indonesia)|
-|`mcp-bridge/`|MCP server stdio; `forexfactory.ts` = fetch feed kalender|
-|`client/src/components/`|`Chart`, `SignalPanel`, `MarketReadings`, `RiskCalculator`, `NewsPanel`, `TradeHistory`, `Modal`, `DecisionModal`|
-|`client/src/ui/`|Design system: token di `index.css` (`@theme`), `AppShell` (topbar + nav rail + drawer), `Button`/`Segmented`, `Chip`/`Stat`/`Dot`, `Icon` (Lucide), `styles.ts` (recipe kelas)|
-|`client/src/lib/`|`api.ts` (hooks SSE/polling), `format.ts` (WIB, angka, countdown)|
-|`client/src/App.tsx`|Layout utama: 3 view (`Chart & Sinyal`, `Level & Indikator`, `Riwayat Trade`) dipilih dari nav rail; chart + panel keputusan kanan; detail via modal|
+|`shared/`|`types.ts` (seluruh kontrak domain) + `indicators.ts` (SMA/EMA/RSI/MACD/ATR/Bollinger murni, null-padded). Dikompilasi oleh kedua project TS.
+|`server/`|`index.ts` (Express + SSE + cache analisis), `env.ts` (loader `.env`), `mcp.ts` (MCP client + TTL + quote push), `trades.ts` (riwayat + Prisma), `*.test.ts` (self-check)
+|`server/analysis/`|`structure.ts` (swing/trend/level), `patterns.ts` (pola candle), `signal.ts` (engine + `GRIDS` + `planPrices`)
+|`server/news/`|`enrich.ts` — mapping event → dampak XAUUSD, `fetchCalendar`, `assessNewsRisk`
+|`mcp-bridge/`|`index.ts` (6 tool MCP, `getTvClient`, `INTERVAL_MAP`), `forexfactory.ts` (feed kalender, `allSettled`)
+|`client/src/lib/`|`api.ts` (hooks SSE/polling), `format.ts` (WIB, angka, countdown)
+|`client/src/components/`|`Chart`, `SignalPanel`, `MarketReadings`, `RiskCalculator`, `NewsPanel`, `TradeHistory`, `Modal`, `DecisionModal`
+|`client/src/ui/`|Design system: `AppShell`, `Button`/`Segmented`, `Chip`/`Dot`/`Stat`, `Icon` (Lucide), `styles.ts` (`NUM`, `FOCUS`, `buttonClass`)
+|`client/src/index.css`|Satu-satunya sumber token Tailwind v4 (`@theme`)
+|`prisma/`|`schema.prisma` (model `Trade`); client digenerate ke `prisma/generated` (gitignored)
 
 ## Development Commands
 
 ```bash
 npm install
-npm run dev        # concurrently: API :3001 (tsx, tanpa watch) + Vite :5173 (proxy /api → :3001)
-npm run build      # vite build → client/dist
-npm start          # production: Express serve API + client/dist di :3001
-npm run typecheck  # tsc --noEmit untuk project server DAN client
+npx prisma generate   # WAJIB: client digenerate ke prisma/generated (gitignored)
+cp .env.example .env  # PORT, HOST, XAUUSD_SYMBOL, ENTRY_STYLE, DATABASE_URL
+
+npm run dev           # concurrently: API :3001 (tsx) + Vite :5173 (proxy /api)
+npm run build         # vite build → client/dist (server tidak dikompilasi)
+npm start             # produksi: NODE_ENV=production, serve API + client/dist
+npm run typecheck     # tsc --noEmit: project server DAN client
 ```
 
-Konfigurasi: salin `.env.example` → `.env` (gitignored). Variabel: `PORT`
-(default `3001`, bind `127.0.0.1` saja), `XAUUSD_SYMBOL` (default
-`OANDA:XAUUSD`), `DATABASE_URL` (Postgres, dipakai Prisma),
-`NODE_ENV=production` mengaktifkan serve `client/dist`.
+Cek mandiri (tidak ada `npm test`):
+
+```bash
+npx tsx server/trades.test.ts
+npx tsx server/analysis/signal.test.ts
+```
+
+Smoke: `curl localhost:3001/api/analysis`, `.../api/analysis?style=scalp`,
+`.../api/trades`. Skema DB: `npx prisma db push` (config: `prisma7.config.ts`
+yang me-load `.env`); tidak ada direktori migrasi.
 
 ## Code Conventions & Common Patterns
 
-- **Module system**: ESM (`"type": "module"`). Import relatif di `server/`, `shared/`,
-  `mcp-bridge/` memakai akhiran `.js` merujuk file `.ts` (konvensi tsc/tsx):
-  `import { callTool } from './mcp.js'`. Import lintas batas ke `shared/` di client
-  tanpa ekstensi: `import type { Candle } from '../../../shared/types'`.
-- **Type-only imports**: selalu `import type { … }` untuk tipe; jangan inline
-  `import("pkg").Type` di anotasi.
-- **Shared contract**: semua tipe domain (`Candle`, `Quote`, `TfSnapshot`,
-  `TradePlan`, `TradeRecord`, `Analysis`, `NewsEvent`, …) hidup di `shared/types.ts` — jangan
-  menduplikasi di client/server.
-- **Pure core**: `shared/indicators.ts` dan `server/analysis/{structure,patterns,signal}.ts`
-  bebas I/O — inilah test seam utama. Semua I/O (MCP, fetch, DB) terkonsentrasi di
-  `server/mcp.ts`, `server/index.ts`, `server/trades.ts`, `mcp-bridge/`.
-- **Caching**: `server/mcp.ts` — `Map` cache TTL per tool (`get_quote` 3 dtk,
-  `get_ohlcv` 10 dtk, TA 1 menit, kalender 5 menit); cache hanya dedupe — kesegaran
-  diatur lapisan stream. Cache analisis di `server/index.ts` maksimal 20 dtk
-  (single-flight), dihitung ulang lebih awal bila harga bergeser ≥ 0.2×ATR H1
-  (interval minimum 8 dtk).
-- **Trade history**: `server/trades.ts` — sinyal BUY/SELL otomatis jadi
-  `TradeRecord` (persist **PostgreSQL** via Prisma — model `Trade`);
-  `resolveTrade` murni = test seam utama riwayat. Status:
-  `WAITING` (order limit/stop, entry belum tersentuh) → `RUNNING` (entry
-  terisi) → `TP_HIT`/`SL_HIT`; `action.kind === 'MARKET'` langsung `RUNNING`.
-  Order yang entry-nya tak tersentuh dalam `WAITING_TTL_SEC` (1 jam) jadi
-  `EXPIRED` — tanpa itu limit menggantung memblokir semua sinyal searah
-  selamanya. Cek expiry berjalan sebelum guard harga, jadi feed mati pun
-  tetap mengedaluwarsakan order. Sinyal searah yang masih `WAITING`/`RUNNING`
-  memblokir record baru. Harga wire tidak sah (≤ 0 / `NaN`, mis. `lp` absen)
-  WAJIB diabaikan — jangan pernah menutup trade dengan harga busuk
-  (regresi nyata: TP_HIT palsu).
-- **Error handling**: handler tool bridge membungkus hasil dengan `errorResult`
-  (`isError: true`, JSON `{error}`); `callTool` melempar `Error` bila `isError`/`error`
-  ada; Express memakai error middleware → `500 {error}`; hooks client menyimpan
-  pesan error di state dan menampilkan banner + tombol retry.
-- **Async**: `Promise.all`/`Promise.allSettled` untuk fetch paralel (feed ForexFactory
-  toleran per-URL gagal via `allSettled`); tool bridge bersifat `async` dan selalu
-  menangkap exception menjadi hasil error, tidak crash proses.
-- **State management**: hooks sederhana di `client/src/lib/api.ts`, tanpa Redux/
-  React Query; SSE `/api/stream` untuk quote (per tick dari stream bridge),
-  analisis, dan daftar trade realtime; polling untuk candles/berita/health
-  (dan fallback snapshot `/api/trades`).
-- **Naming**: file komponen PascalCase (`SignalPanel.tsx`), modul logika camelCase
-  (`forexfactory.ts`), konstanta domain UPPER_SNAKE (`TF_WEIGHT`, `CALENDAR_CURRENCIES`),
-  tipe domain PascalCase. `TF` = `'M5'|'M15'|'H1'|'H4'|'D1'`; interval bridge memakai
-  gaya TradingView (`5m`, `15m`, `1h`, `4h`, `1D`). Tipe bentuk data kawat yang belum
-  terpetakan diberi awalan `Raw` (`RawBar`, `RawQuote`, `RawEvent`) lalu dipetakan
-  ke tipe domain `shared/types.ts`.
-- **Logging**: `console.error` dengan prefix `[api]`/`[mcp]` — **stdout direserve
-  untuk protokol MCP stdio**, jangan `console.log` di server/bridge.
-- **UI/teks**: string user-facing berbahasa Indonesia (alasan, peringatan, label);
-  harga diformat 2 desimal (`fmtPrice`), waktu WIB via `Intl.DateTimeFormat`
-  dengan `timeZone: 'Asia/Jakarta'`.
-- **Design system**: token tunggal di `client/src/index.css` (`@theme`) —
-  warna `canvas/surface/surface-2/3`, `fg/muted/faint/line/line-strong`,
-  `accent(-soft/-strong)`, semantik finansial `bull/bear/neutral/warn/info`
-  (+`-soft`), serta `chart-*`. Light mode satu-satunya tema. Tipografi Inter
-  (display/body) + JetBrains Mono (angka, lewat kelas `num`); ukuran terkecil
-  `text-2xs` (11px) — jangan pakai `text-[10px]`. Radius 6/8/10/12px,
-  shadow `sm/md/lg`, spacing kelipatan 4px, dimensi komponen lewat
-  `--spacing-header/toolbar/rail/rail-lg/panel`.
-- **Komponen UI**: pakai `client/src/ui/` — `Button` (varian `ghost/selected/
-  primary/outline`, `pressed` → `aria-pressed`), `Segmented` untuk tablist,
-  `Chip`/`Dot`/`Stat` dengan tipe `Tone`, `Icon` (Lucide, stroke 1.75 baku —
-  **jangan campur icon library lain**), `AppShell`/`PageHeader`. Jangan
-  menulis ulang resep kelas; tambahkan di `ui/styles.ts`.
-- **Aksesibilitas**: kontrol toggle wajib `aria-pressed`/`aria-current`,
-  fokus memakai `FOCUS` (ring `accent/40`), ikon dekoratif `aria-hidden`.
-  Jangan `outline-none` tanpa pengganti.
-- **Angka finansial**: selalu kelas `NUM` (`font-variant-numeric:
-  tabular-nums`), rata kanan di tabel, positif `text-bull`, negatif
-  `text-bear`.
-- **Prinsip produk**: setiap keputusan WAJIB disertai daftar `reasons` dan
-  `warnings` yang bisa dibaca manusia — jangan menghasilkan verdict tanpa
-  penjelasan (lihat `computeAnalysis`).
-- **Angka & keuangan**: kontrak XAUUSD diasumsikan 100 oz/lot (`OZ_PER_LOT` di
-  `RiskCalculator.tsx`); harga dibulatkan `round2` untuk level entry/SL/TP.
+- **ESM** (`"type": "module"`). Import relatif di `server/`, `shared/`,
+  `mcp-bridge/` memakai akhiran `.js` merujuk file `.ts`:
+  `import { callTool } from './mcp.js'`. Di client tanpa ekstensi:
+  `import type { Candle } from '../../../shared/types'`.
+- **`import type`** untuk semua tipe; jangan inline `import("pkg").Type`.
+- **Kontrak tunggal**: tipe domain hanya di `shared/types.ts`. `shared/` harus
+  bebas `node:` dan DOM (dikompilasi dua project dengan `lib`/`types` berbeda).
+- **Pure core**: `shared/indicators.ts`, `server/analysis/{structure,patterns,signal}.ts`,
+  `resolveTrade` di `trades.ts`, `enrichEvent`/`assessNewsRisk` — inilah test seam.
+  Semua I/O di `server/index.ts`, `server/mcp.ts`, `server/trades.ts`, `mcp-bridge/`.
+- **Naming**: komponen PascalCase (`SignalPanel.tsx`), modul camelCase
+  (`forexfactory.ts`), konstanta domain UPPER_SNAKE (`GRIDS`, `TF_WEIGHT`,
+  `CALENDAR_CURRENCIES`, `WAITING_TTL_SEC`, `OZ_PER_LOT`). Bentuk data kawat
+  mentah diberi awalan `Raw` (`RawBar`, `RawQuote`, `RawEvent`).
+- **Varian per gaya**: perilaku yang berbeda antara swing dan scalp dikumpulkan
+  di tabel (`GRIDS`, `WAITING_TTL_SEC`, `SCALP_WEIGHT`), bukan `if` tersebar.
+  Gaya diturunkan dari `TradePlan.basisTf` (`styleOf`), tidak disimpan terpisah.
+- **Caching**: `server/mcp.ts` — `Map` berisi *Promise* (dedupe in-flight).
+  TTL: `get_quote` 3 s, `get_ohlcv` 10 s (**2 s** bila interval `Nm`),
+  TA 60 s, kalender 300 s, default 30 s. Cache hanya dedupe — kesegaran diatur
+  lapisan stream.
+- **Cache analisis**: per gaya, single-flight (`analysisInFlight` Map), maks 20 s;
+  dihitung ulang lebih awal bila harga bergeser ≥ `max(0.2×ATR[basisTf], 0.25)`
+  (usia minimum 8 s).
+- **Error handling**: bridge membungkus kegagalan jadi `errorResult`
+  (`isError: true`, JSON `{error}`); `callTool` melempar `Error`; Express error
+  middleware → `500 {error}`; hooks client menyimpan pesan dan menampilkan
+  banner + tombol retry. Feed eksternal yang mati **tidak boleh** mematikan
+  analisis: `fetchCalendar` mengembalikan `[]` + `console.error`.
+- **Async**: `Promise.all` untuk fetch paralel yang wajib sukses,
+  `Promise.allSettled` untuk feed yang boleh gagal per-URL.
+- **Logging**: hanya `console.error` dengan prefix `[api]`/`[mcp]`/`[news]`.
+  **stdout direserve protokol MCP stdio — jangan `console.log` di server/bridge.**
+- **State client**: hook biasa di `client/src/lib/api.ts`, tanpa Redux/React Query.
+  `usePoll(url, 0)` = pause (tanpa fetch & timer); `useStream(..., enabled)`
+  = unsubscribe. Hanya satu sumber analisis aktif per waktu.
+- **UI/teks**: semua string user-facing bahasa Indonesia. Harga 2 desimal
+  (`fmtPrice`, `round2`), waktu WIB lewat `Intl.DateTimeFormat`.
+- **Design system**: token di `client/src/index.css` (`@theme`) —
+  `canvas/surface/surface-2/3`, `fg/muted/faint/line/line-strong`,
+  `accent(-soft/-strong)`, `bull/bear/neutral/warn/info` (+`-soft`), `chart-*`.
+  Tipografi Inter + JetBrains Mono; ukuran terkecil `text-2xs` (11px).
+  Jangan menambah warna ad-hoc; resep kelas baru masuk `ui/styles.ts`.
+- **Komponen**: pakai `ui/` — jangan tulis ulang `Button`/`Segmented`/`Chip`.
+  Icon hanya `lucide-react` lewat `ui/Icon` (stroke 1.75).
+- **Aksesibilitas**: toggle wajib `aria-pressed`/`aria-current`, fokus pakai
+  `FOCUS` (ring `accent/40`), ikon dekoratif `aria-hidden`.
+- **Angka finansial**: selalu `NUM` (`tabular-nums`), rata kanan di tabel,
+  positif `text-bull`, negatif `text-bear`.
+- **Prinsip produk**: setiap verdict wajib disertai `reasons` dan `warnings`
+  yang bisa dibaca manusia — jangan pernah menghasilkan keputusan tanpa alasan.
+- **Kontrak XAUUSD**: 100 oz/lot (`OZ_PER_LOT`); risiko per ounce =
+  `stopDistance + spread`.
 
 ## Important Files
 
-- `server/index.ts` — entry REST API; route `/api/health`, `/api/quote`,
-  `/api/candles`, `/api/analysis`, `/api/news`, `/api/trades`, serta SSE
-  `/api/stream` (push `quote` tiap tick, `analysis` saat berubah, `trades`
-  saat status trade berubah; ticker berhenti saat tak ada subscriber);
-  serve `client/dist` saat produksi. Trade dicatat otomatis di
-  `computeAnalysisFull`; SL/TP diresolusi di tiap tick quote.
-- `server/mcp.ts` — MCP client singleton (spawn bridge via
-  `StdioClientTransport`, `node --import tsx mcp-bridge/index.ts`) + cache TTL;
-  `onQuotePush`/`startQuoteStream` — listener notifikasi `notifications/quote`
-  dari bridge (stream harga per tick).
-- `server/analysis/signal.ts` — `computeAnalysis()`: keputusan entry, ambang skor
-  (≥3 → BUY/SELL, =2 → trade kecil, <2 → WAIT), `confidence = 50 + 6.5×skor`
-  (diklamp [10, 95]), gate berita (high-impact −5 mnt…+1 jam → verdict dipaksa WAIT).
-  Tiap plan memuat `action` — instruksi order (Buy/Sell Limit/Stop, Market, Tunggu) +
-  keterangan eksekusi bahasa Indonesia (`describeAction`, override HOLD saat verdict WAIT).
-- `mcp-bridge/index.ts` — registrasi 6 tool MCP (`subscribe_quote` = stream
-  quote via `watchQuotes` → notifikasi `notifications/quote`); konversi interval
-  → timeframe `@mathieuc/tradingview` (`INTERVAL_MAP`). **Semua panggilan WS
-  WAJIB lewat `getTvClient()`** (client bersama) — tanpa itu tiap call buka
-  koneksi sendiri dan kena rate-limit 429.
-- `shared/indicators.ts` — SMA/EMA/RSI/MACD/ATR/Bollinger murni (null-padded).
-- `server/trades.ts` — riwayat trading: `recordSignal`, `resolveTrade` (murni),
-  `resolveTrades`, `listTrades`; **semua async** (persist PostgreSQL).
-- **DB**: tabel `trades` (kolom snake_case: `created_at`/`closed_at` BIGINT detik,
-  `filled` BOOLEAN, `exit_price`, `setup_type`, `action`/`reasons` = JSON string)
-  + index `trades_status_dir`; skema dikelola Prisma (`prisma/schema.prisma`,
-  model `Trade`), diterapkan via `npx prisma db push` / `prisma migrate`;
-  koneksi CLI lewat `prisma7.config.ts` (me-load `.env` yang sama).
-  Client digenerate ke `prisma/generated` (di-gitignore) — `npx prisma generate`
-  WAJIB sebelum typecheck/start. `resolveTrade` tetap murni sehingga self-check
-  jalan tanpa DB (client Prisma lazy, dibuat saat query pertama).
-- **Env**: `.env` di root repo (gitignored, template `.env.example`) dibaca oleh
-  `server/env.ts` (`process.loadEnvFile`) yang WAJIB di-import pertama di
-  `server/index.ts` — modul lain membaca `process.env` saat load. Koneksi DB
-  memakai `DATABASE_URL`.
-- `server/trades.test.ts` — self-check assert (`npx tsx server/trades.test.ts`)
-  untuk `resolveTrade`: fill limit, gap SL, mirror BUY/SELL, harga tidak sah.
-- `client/src/components/Chart.tsx` — lightweight-charts v5, **satu chart**
-  untuk candle + EMA + volume + RSI/MACD. Indikator memakai price scale
-  overlay tersembunyi (`priceScaleId: 'volume'|'rsi'|'macd'`) yang ditumpuk
-  dari bawah lewat `scaleMargins`; margin skala utama ikut menyesuaikan.
-  **Jangan pisahkan RSI/MACD ke chart kedua** dan jangan dua-arahkan
-  `setVisibleLogicalRange` — chart kedua yang tersembunyi (lebar 0) memancarkan
-  rentang cacat balik ke chart harga sehingga candle menyempit (regresi nyata).
-  Jangan pula pasang pane indikator sebagai overlay (`absolute bottom-0`) atau
-  bongkar container DOM-nya secara kondisional: chart dibuat sekali dalam satu
-  effect, jadi container wajib selalu ter-mount.
-  **Jangan `fitContent()` di setiap update data**: `useCandles` poll 20 dtk dan
-  memuat 5000 bar (batas bridge) agar histori bisa di-pan; viewport disimpan via
-  `getVisibleLogicalRange`/`setVisibleLogicalRange` dan hanya di-refit saat
-  `dataTf` berubah — prop itu menandai TF milik dataset, bukan TF terpilih.
-- `client/src/components/SignalPanel.tsx` — panel keputusan dengan hierarki
-  tetap: verdict → aksi → tangga level (TP2/TP1/Entry/harga/SL) → RR → gate
-  news → alasan. `compact` menukar daftar alasan dengan tombol ke modal.
-- `vite.config.ts` — root `client/`, plugin react + tailwindcss, proxy `/api`.
-- `client/src/index.css` — satu-satunya sumber token Tailwind v4 (`@theme`).
-  Warna/ukuran/font/radius/shadow didefinisikan di sini; jangan menambah warna
-  ad-hoc di komponen.
+- `server/index.ts` — entry API. Route `/api/health|quote|candles|analysis|news|trades`
+  + SSE `/api/stream`. `?style=scalp` menghitung gaya scalp tanpa mengubah env;
+  SSE selalu memakai `ENTRY_STYLE`. `import './env.js'` **wajib baris pertama**.
+- `server/env.ts` — `process.loadEnvFile('.env')`, toleran `ENOENT`.
+- `server/mcp.ts` — MCP client singleton, spawn bridge lewat
+  `process.execPath --import tsx` (Windows-safe, bukan `npx`); `callTool`,
+  `onQuotePush`, `startQuoteStream`, `mcpHealth`.
+- `server/analysis/signal.ts` — `GRIDS`, `planPrices` (murni, diekspor untuk
+  self-check), `computeAnalysis`, `describeAction`, `quoteSpread`.
+- `server/trades.ts` — status `WAITING → RUNNING → TP_HIT|SL_HIT`, `EXPIRED`
+  lewat TTL per gaya (swing 3600 s, scalp 600 s; expiry dicek **sebelum** cek
+  harga sehingga feed mati tetap mengedaluwarsakan). TP diuji sebelum SL.
+  Sinyal searah + segaya yang masih terbuka memblokir record baru; gaya lain
+  independen. Harga ≤ 0/`NaN` diabaikan (regresi nyata: TP_HIT palsu).
+- `server/analysis/signal.test.ts` — self-check `planPrices` vs `GRIDS`.
+- `server/trades.test.ts` — self-check `resolveTrade`.
+- `mcp-bridge/index.ts` — 6 tool MCP; `INTERVAL_MAP` interval TradingView →
+  timeframe. **Semua panggilan WS wajib via `getTvClient()`** (client bersama),
+  selain itu tiap call membuka koneksi sendiri → `429`.
+- `client/src/components/Chart.tsx` — lightweight-charts v5, **satu chart**.
+  Indikator memakai price scale overlay tersembunyi
+  (`priceScaleId: 'volume'|'rsi'|'macd'`, `scaleMargins` bertumpuk dari bawah).
+  Jangan pisahkan RSI/MACD ke chart kedua (rentang cacat balik menyempitkan
+  candle), jangan bongkar container secara kondisional (chart dibuat sekali
+  dalam effect mount), dan **jangan `fitContent()` di setiap update data**:
+  viewport disimpan/dipulihkan via logical range, refit hanya ketika `dataTf`
+  berubah (TF milik dataset, bukan TF terpilih). Data live di-`series.update()`
+  per tick, bukan `setData`.
+- `client/src/components/SignalPanel.tsx` — hierarki tetap: verdict → aksi →
+  tangga level (TP2/TP1/Entry/harga/SL) → RR + `basisTf` + spread → gate news
+  → alasan. `compact` menukar daftar alasan dengan tombol modal.
+- `client/src/components/TradeHistory.tsx` — label status + teks TTL yang
+  **harus** menyalin `WAITING_TTL_SEC` (scalp "10 menit", swing "1 jam").
+- `prisma/schema.prisma` — model `Trade` → tabel `trades` (snake_case,
+  `created_at`/`closed_at` BIGINT detik, `action`/`reasons` JSON string,
+  `basis_tf` default `"H1"`), index `trades_status_dir`.
+- `prisma7.config.ts` — config CLI Prisma: me-load `.env`, set
+  `datasource.url = process.env.DATABASE_URL`.
 
 ## Runtime & Tooling Preferences
 
-- **Node.js ≥ 20** (dikembangkan di Node 25), **npm** sebagai package manager
-  (tidak ada bun/pnpm lockfile — jangan tukar manager).
-- TypeScript dieksekusi via **tsx** (`tsx` di dev; `node --import tsx` untuk
-  spawn bridge) — tidak perlu build step terpisah untuk server/bridge.
-  **Jangan pakai `tsx watch` di `dev:api`**: di-spawn lewat `concurrently`,
-  prosesnya menggantung tanpa pernah listen (direproduksi & diverifikasi);
-  perubahan server butuh restart manual `npm run dev`.
-- `tsc` dipakai hanya untuk typecheck (`--noEmit`), bukan kompilasi.
-- Windows-friendly: spawn bridge memakai `process.execPath` (node), bukan `npx`.
-- Dependensi runtime inti: `express`, `@modelcontextprotocol/sdk` (1.x, pasangan
-  `zod` 3.x), `@mathieuc/tradingview`, `@prisma/client` 7 + `@prisma/adapter-pg`, `react` 18,
-  `lightweight-charts` 5, `lucide-react` (satu-satunya icon library).
-- Font dimuat dari Google Fonts di `client/index.html`: Inter (display/body) dan
-  JetBrains Mono (angka). Jangan menambah family baru tanpa alasan kuat.
-- Data candle memakai endpoint internal TradingView yang **tidak resmi** —
-  antisipasi perubahan API; semua aksesnya terisolasi di `mcp-bridge/`.
+- **Node.js ≥ 20** (dikembangkan di Node 25). **npm** satu-satunya package
+  manager (`package-lock.json`) — jangan tukar ke bun/pnpm.
+- TypeScript dijalankan via **tsx** (`tsx` di dev dan produksi). Tidak ada build
+  step untuk server/bridge; `npm run build` hanya membangun client.
+  **Jangan pakai `tsx watch` di `dev:api`** — di bawah `concurrently` prosesnya
+  menggantung tanpa listen; restart manual setelah mengubah server.
+- `tsc` hanya untuk typecheck (`--noEmit`), dipisah per project
+  (`tsconfig.json` server/bridge/shared, `client/tsconfig.json`).
+- `npx prisma generate` wajib setelah mengubah `schema.prisma` atau di clone
+  baru; artefak di `prisma/generated` tidak di-commit.
+- Dependensi inti: `express`, `@modelcontextprotocol/sdk` (1.x + `zod` 3.x),
+  `@mathieuc/tradingview`, `@prisma/client` 7 + `@prisma/adapter-pg`, `react` 18,
+  `lightweight-charts` 5, `lucide-react`, `tailwindcss` 4.
+- Env (`server/env.ts`): `PORT` (3001), `HOST` (127.0.0.1), `XAUUSD_SYMBOL`
+  (`OANDA:XAUUSD`), `ENTRY_STYLE` (`swing`|`scalp`), `DATABASE_URL`,
+  `NODE_ENV=production` mengaktifkan serve `client/dist`.
+- Docker: `Dockerfile` multi-stage (`prisma generate && npm run build`, lalu
+  runtime `npx tsx server/index.ts`); `docker-compose.yml` memakai Postgres
+  host + Traefik, service `db-setup` menjalankan `prisma db push`.
 
 ## Testing & QA
 
-- **Belum ada test framework** (tidak ada vitest/jest/playwright maupun script
-  `npm test`) — ini kesenjangan yang diketahui. Saat menambahkan, `vitest` adalah
-  pilihan wajar (Vite 6 sudah ada); targetkan dulu modul murni:
-  `shared/indicators.ts`, `server/analysis/structure.ts`,
-  `server/analysis/patterns.ts`, `server/analysis/signal.ts`, serta
-  `enrichEvent`/`assessNewsRisk` di `server/news/enrich.ts` (keduanya murni).
-- Catatan test seam: `computeAnalysis` membaca `Date.now()` sekali di awal
-  (`generatedAt`) — pakai fake timer atau injeksi `nowSec` bila determinisme
-  penuh dibutuhkan; `RawEvent` di `enrich.ts` belum diekspor (uji via structural
-  typing atau ekspor dulu).
-- QA yang ada saat ini: `npm run typecheck` (wajib hijau sebelum selesai),
-  self-check `npx tsx server/trades.test.ts` (wajib hijau), smoke manual via
-  curl `/api/analysis` + `/api/trades` dan verifikasi UI di browser.
-- **Verifikasi UI wajib di browser**, bukan hanya typecheck: buka dev server,
-  cek console error, lalu ukur dengan `getBoundingClientRect()` (lebar chart,
-  panel, posisi ikon rail) di 1440×900, 1024×768, dan 390×844 — termasuk
-  `document.documentElement.scrollWidth > innerWidth` untuk overflow.
-  Toggle tiap kontrol (EMA/Vol/RSI/MACD, nav rail hover & pin) dan pastikan
-  ukuran chart tidak berubah saat indikator dinyalakan.
-- Smoke test pola yang terbukti: `callTool` dari `server/mcp.ts` dalam skrip
-  `tsx` sementara, cek bentuk respons tool bridge, lalu hapus skripnya.
+- **Tidak ada test framework** (tanpa vitest/jest/playwright, tanpa `npm test`).
+  QA = dua self-check assert (`node:assert/strict`, gaya `assert.equal`,
+  tanpa `describe/it`) + typecheck + smoke manual.
+- Self-check hidup di `server/trades.test.ts` (resolveTrade: fill limit, gap SL,
+  mirror BUY/SELL, harga tak sah, TTL per gaya) dan
+  `server/analysis/signal.test.ts` (grid scalp vs swing: band ATR, RR, arah).
+  Keduanya dijalankan terpisah: `npx tsx <file>` — masing-masing proses exit
+  sendiri. Sukses mencetak satu baris (trades → stderr, signal → stdout).
+- Wajib hijau sebelum selesai: `npx prisma generate` → `npm run typecheck` →
+  kedua self-check. Typecheck gagal di clone baru tanpa generate.
+- Test seam murni yang belum diuji tapi siap: `shared/indicators.ts`,
+  `server/analysis/structure.ts`, `server/analysis/patterns.ts`,
+  `enrichEvent`/`assessNewsRisk`. `computeAnalysis` membaca `Date.now()` sekali
+  (`nowSec`) — suntikkan waktu bila butuh determinisme; `RawEvent` belum
+  diekspor.
+- **Verifikasi UI wajib di browser** untuk perubahan yang menyentuh UI: cek
+  console error, ukur `getBoundingClientRect()` (chart, panel, rail) di
+  1440×900, 1024×768, 390×844, dan pastikan
+  `document.documentElement.scrollWidth <= innerWidth`. Toggle tiap kontrol
+  (EMA/Vol/RSI/MACD, Swing/Scalp, rail hover & pin) dan pastikan ukuran chart
+  tidak berubah.
+- Smoke API: `curl /api/analysis`, `/api/analysis?style=scalp`, `/api/trades`;
+  probe ad-hoc lewat skrip `tsx` sementara yang memanggil `callTool` — hapus
+  setelah dipakai.
 
 ## Data-Source Caveats
 
-- `OANDA:XAUUSD` adalah simbol TradingView default; ganti via env `XAUUSD_SYMBOL`.
-- Feed ForexFactory: `ff_calendar_thisweek.json` + `ff_calendar_nextweek.json`;
-  file `nextweek` kadang 404 — fetch sudah toleran (`Promise.allSettled`), jangan
-  "perbaiki" dengan menggagalkan seluruh kalender.
-- Rating TradingView (`get_technical_analysis`) bentuknya `{ tf: { All, MA, Other } }`
-  dengan `All` berupa angka [-2..2]; `extractRating` di `server/index.ts` sudah
-  toleran terhadap variasi bentuk.
-- TradingView membatasi laju koneksi WS — pakai `TradingViewClient` bersama
-  (`getTvClient()` di `mcp-bridge/`); koneksi per-panggilan → error `429`
-  (`Unexpected server response: 429`).
-- Quote stream kadang mengirim tanpa `lp` (awal langganan / market tutup) →
-  fallback `toQuote` memakai `rtc`; `resolveTrade` mengabaikan harga ≤ 0/`NaN`.
+- `OANDA:XAUUSD` default; ganti lewat `XAUUSD_SYMBOL`. Candle berasal dari
+  endpoint internal TradingView yang **tidak resmi** — perubahan API mungkin.
+- TradingView membatasi laju koneksi WS: selalu pakai `getTvClient()`; koneksi
+  per-panggilan → `Unexpected server response: 429`.
+- Feed kalender: `ff_calendar_thisweek.json` + `ff_calendar_nextweek.json`;
+  `nextweek` sering 404 dan feed bisa 429. Fetch toleran per-URL
+  (`allSettled`), dan kegagalan total hanya menghasilkan daftar kosong —
+  jangan "perbaiki" dengan menggagalkan analisis.
+- Rating `get_technical_analysis` berbentuk `{ tf: { All, MA, Other } }`
+  dengan `All` ∈ [-2..2]; `extractRating` sudah toleran variasi bentuk.
+- Quote push kadang tanpa `lp` (awal langganan / market tutup) → `toQuote`
+  jatuh ke `rtc`; `resolveTrade` mengabaikan harga ≤ 0/`NaN`.

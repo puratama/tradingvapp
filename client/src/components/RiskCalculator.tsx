@@ -13,14 +13,20 @@ export default function RiskCalculator({ plan }: { plan: TradePlan }) {
   const [balance, setBalance] = useState(1000);
   const [riskPct, setRiskPct] = useState(1);
 
+  // Spread adds to the stop: you pay it once on entry, so the effective risk
+  // per ounce is stop distance + spread, not the stop alone.
   const stopDistance = plan.stopDistance;
+  const costPerOz = stopDistance !== null ? stopDistance + (plan.spread ?? 0) : null;
   const riskUsd = (balance * riskPct) / 100;
-  const lots = stopDistance && stopDistance > 0 ? riskUsd / (stopDistance * OZ_PER_LOT) : 0;
+  const lots = costPerOz && costPerOz > 0 ? riskUsd / (costPerOz * OZ_PER_LOT) : 0;
   const units = lots * OZ_PER_LOT;
 
   const rows: { label: string; value: string; strong?: boolean }[] = [
     { label: 'Risiko per trade', value: `$${riskUsd.toFixed(2)}` },
-    { label: 'Jarak stop loss', value: stopDistance ? `$${stopDistance.toFixed(2)} / oz` : '—' },
+    {
+      label: 'Jarak SL + spread',
+      value: costPerOz ? `$${costPerOz.toFixed(2)} / oz` : '—',
+    },
     { label: 'Ukuran posisi', value: lots > 0 ? `${lots >= 0.01 ? lots.toFixed(2) : lots.toFixed(4)} lot` : '—', strong: true },
     { label: 'Setara ounce', value: lots > 0 ? `${units.toFixed(1)} oz` : '—' },
   ];

@@ -23,6 +23,8 @@ function PriceBox({ label, value, toneClass = 'text-fg' }: { label: string; valu
 /** Full trade detail for the modal — never collapsed. */
 export function TradeDetail({ trade: t }: { trade: TradeRecord }) {
   const chip = STATUS[t.status];
+  // Must mirror WAITING_TTL_SEC in server/trades.ts.
+  const ttlText = t.basisTf === 'M1' || t.basisTf === 'M5' ? '10 menit' : '1 jam';
   return (
     <div className="space-y-3 text-xs">
       <div className="flex flex-wrap items-center gap-2">
@@ -45,17 +47,18 @@ export function TradeDetail({ trade: t }: { trade: TradeRecord }) {
         Eksekusi: <span className="text-fg/80">{t.action.label}</span> — {t.action.note}
       </p>
       <p className="text-muted">
-        Dibuat {fmtDateWib(t.createdAt)} · {fmtTimeWib(t.createdAt)} WIB
+        Dibuat {fmtDateWib(t.createdAt)} · {fmtTimeWib(t.createdAt)} WIB · basis ATR {t.basisTf}
+        <span className="text-faint"> ({t.basisTf === 'M1' || t.basisTf === 'M5' ? 'scalp' : 'swing'})</span>
       </p>
 
       {t.status === 'WAITING' && (
         <p className="rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-muted">
-          Menunggu harga menyentuh entry {fmtPrice(t.entry)} · batal otomatis bila tak tersentuh dalam 1 jam.
+          Menunggu harga menyentuh entry {fmtPrice(t.entry)} · batal otomatis bila tak tersentuh dalam {ttlText}.
         </p>
       )}
       {t.status === 'EXPIRED' && t.closedAt !== null && (
         <p className="rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-muted">
-          Entry tak tersentuh dalam 1 jam · dibatalkan {fmtTimeWib(t.closedAt)} WIB.
+          Entry tak tersentuh dalam {ttlText} · dibatalkan {fmtTimeWib(t.closedAt)} WIB.
         </p>
       )}
       {(t.status === 'TP_HIT' || t.status === 'SL_HIT') && t.exitPrice !== null && t.closedAt !== null && (

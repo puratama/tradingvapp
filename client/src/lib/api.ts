@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Analysis, Candle, NewsEvent, Quote, TF, TradeRecord } from '../../../shared/types';
+import type { Analysis, Candle, EntryStyle, NewsEvent, Quote, TF, TradeRecord } from '../../../shared/types';
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -14,10 +14,11 @@ interface PollState<T> {
   refresh: () => void;
 }
 
+/** `intervalMs = 0` means paused: no initial fetch, no timer. */
 function usePoll<T>(url: string, intervalMs: number): PollState<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(intervalMs > 0);
   const timer = useRef<number | undefined>(undefined);
 
   const load = useCallback(async () => {
@@ -32,6 +33,7 @@ function usePoll<T>(url: string, intervalMs: number): PollState<T> {
   }, [url]);
 
   useEffect(() => {
+    if (intervalMs <= 0) return;
     setLoading(true);
     void load();
     timer.current = setInterval(() => void load(), intervalMs);
@@ -61,7 +63,7 @@ function ensureStream(): void {
   es.onerror = () => emitStream('error', null);
 }
 
-function useStream<T>(event: 'quote' | 'analysis' | 'trades', refreshUrl: string): PollState<T> {
+function useStream<T>(event: 'quote' | 'analysis' | 'trades', refreshUrl: string, enabled = true): PollState<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -80,6 +82,7 @@ function useStream<T>(event: 'quote' | 'analysis' | 'trades', refreshUrl: string
   }, [refreshUrl]);
 
   useEffect(() => {
+    if (!enabled) return;
     ensureStream();
     const onEvent = (name: StreamEvent, payload: unknown) => {
       if (name === event) {
@@ -96,13 +99,18 @@ function useStream<T>(event: 'quote' | 'analysis' | 'trades', refreshUrl: string
     return () => {
       streamListeners.delete(onEvent);
     };
-  }, [event, load]);
+  }, [event, load, enabled]);
 
   return { data, error, loading, refresh: () => void load() };
 }
 
-export function useAnalysis() {
-  return useStream<Analysis>('analysis', '/api/analysis');
+/** Entry style: swing plans live hours, scalp plans minutes (M5 basis stops).
+ *  The SSE snapshot is always swing, so scalp mode polls its own REST route and
+ *  leaves the swing stream unsubscribed — only one analysis source runs. */
+export function useAnalysis(style: EntryStyle = 'swing') {
+  const swing = useStream<Analysis>('analysis', '/api/analysis', style === 'swing');
+  const scalp = usePoll<Analysis>('/api/analysis?style=scalp', style === 'scalp' ? 15_000 : 0);
+  return style === 'scalp' ? scalp : swing;
 }
 
 export function useQuote() {
@@ -116,10 +124,12 @@ export function useTrades() {
 /**
  * Latest candles for a timeframe. 5000 is the bridge maximum (~10 months of
  * H1, ~1 year of H4) so the user can pan left into real history instead of
- * hitting the edge of a short window. Polling keeps the right edge live.
+ * hitting the edge of a short window. Polling keeps the right edge live; M1/M5
+ * close in seconds, so they refetch far sooner than H4/D1.
  */
 export function useCandles(tf: TF) {
-  return usePoll<{ tf: TF; bars: Candle[] }>(`/api/candles?tf=${tf}&count=5000`, 20_000);
+  const intervalMs = tf === 'M1' ? 3_000 : tf === 'M5' ? 5_000 : tf === 'M15' ? 10_000 : 20_000;
+  return usePoll<{ tf: TF; bars: Candle[] }>(`/api/candles?tf=${tf}&count=5000`, intervalMs);
 }
 
 export function useNews() {

@@ -1,4 +1,4 @@
-import type { Analysis, Quote, TF } from '../../shared/types';
+import type { Analysis, EntryStyle, Quote, TF } from '../../shared/types';
 import { TIMEFRAMES } from '../../shared/types';
 import { useAnalysis, useCandles, useHealth, useNews, useNow, useQuote, useTrades } from './lib/api';
 import { countdown, fmtDateWib, fmtPrice, fmtTimeWib } from './lib/format';
@@ -158,11 +158,12 @@ function MarketStrip({
 
 export default function App() {
   const [tf, setTf] = useState<TF>('H1');
+  const [style, setStyle] = useState<EntryStyle>('swing');
   const [view, setView] = useState<View>('chart');
   const [detail, setDetail] = useState<DetailKind>(null);
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
   const [showDecision, setShowDecision] = useState(false);
-  const analysisQuery = useAnalysis();
+  const analysisQuery = useAnalysis(style);
   const quoteQuery = useQuote();
   const candlesQuery = useCandles(tf);
   const newsQuery = useNews();
@@ -187,8 +188,16 @@ export default function App() {
   const pageActions =
     view === 'chart' ? (
       <>
+        <Segmented
+          options={[
+            { id: 'swing', label: 'Swing' },
+            { id: 'scalp', label: 'Scalp' },
+          ]}
+          value={style}
+          onChange={setStyle}
+          ariaLabel="Gaya entry"
+        />
         <Segmented options={TIMEFRAMES.map((t) => ({ id: t, label: t }))} value={tf} onChange={setTf} ariaLabel="Timeframe chart" />
-        <div className="h-4 w-px shrink-0 bg-line" aria-hidden />
         <Button size="sm" icon={ShieldCheck} onClick={() => setDetail('risk')}>
           Risiko
         </Button>

@@ -14,6 +14,7 @@ function trade(over: Partial<TradeRecord>): TradeRecord {
     status: 'RUNNING',
     direction: 'BUY',
     action: { kind: 'MARKET', label: 'Market', note: '' },
+    basisTf: 'H1',
     entry: 4000,
     sl: 3990,
     tp1: 4020,
@@ -54,6 +55,11 @@ assert.equal(resolveTrade(limit, 4025, 1_000 + ttl - 1), limit); // just under t
 assert.deepEqual(resolveTrade(limit, 4025, 1_000 + ttl), { ...limit, status: 'EXPIRED', closedAt: 1_000 + ttl });
 assert.deepEqual(resolveTrade(limit, 0, 1_000 + ttl), { ...limit, status: 'EXPIRED', closedAt: 1_000 + ttl }); // dead feed still expires
 assert.equal(resolveTrade(t, 4005, 1_000 + ttl * 24), t); // filled trades never expire
+
+// Scalp orders die on their own clock: a dead M5 limit must not block for an hour.
+const scalpLimit = trade({ basisTf: 'M5', action: { kind: 'BUY_LIMIT', label: 'Buy Limit', note: '' }, filled: false, status: 'WAITING' });
+assert.equal(resolveTrade(scalpLimit, 4025, 1_000 + 10 * 60 - 1), scalpLimit);
+assert.equal(resolveTrade(scalpLimit, 4025, 1_000 + 10 * 60).status, 'EXPIRED');
 
 // SELL mirrors: TP below entry, SL above.
 const sell = trade({ direction: 'SELL', sl: 4010, tp1: 3980 });

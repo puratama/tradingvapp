@@ -121,6 +121,12 @@ export default function SignalPanel({ analysis, compact = false, onDetail }: Sig
         {plan.stopDistance !== null && (
           <span>
             SL <span className="font-medium text-fg">${plan.stopDistance.toFixed(2)}</span>/lot
+            <span className="text-faint"> · {plan.basisTf}</span>
+          </span>
+        )}
+        {plan.spread !== null && (
+          <span>
+            spread <span className="font-medium text-fg">${plan.spread.toFixed(2)}</span>
           </span>
         )}
       </div>

@@ -77,7 +77,10 @@ export async function callTool<T>(name: string, args: Record<string, unknown>): 
     return parsed as T;
   })();
 
-  cache.set(key, { value, expires: Date.now() + (TTL_MS[name] ?? 30_000) });
+  // Intraday bars go stale fast; M1/M5 feeds are re-read every tick at 1-2s.
+  const ttl =
+    name === 'get_ohlcv' ? (String(args.interval ?? '').match(/^\d+m$/) ? 2_000 : TTL_MS.get_ohlcv) : (TTL_MS[name] ?? 30_000);
+  cache.set(key, { value, expires: Date.now() + ttl });
   value.catch(() => cache.delete(key));
   return { data: await value, fromCache: false };
 }

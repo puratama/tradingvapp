@@ -1,8 +1,11 @@
 /** Shared domain types between server and client. */
 
-export type TF = 'M5' | 'M15' | 'H1' | 'H4' | 'D1';
+export type TF = 'M1' | 'M5' | 'M15' | 'H1' | 'H4' | 'D1';
 
-export const TIMEFRAMES: TF[] = ['M5', 'M15', 'H1', 'H4', 'D1'];
+/** Trade style: swing sizes stops on H1 ATR, scalp on M5 ATR. */
+export type EntryStyle = 'swing' | 'scalp';
+
+export const TIMEFRAMES: TF[] = ['M1', 'M5', 'M15', 'H1', 'H4', 'D1'];
 
 export interface Candle {
   /** Bar open time, Unix seconds UTC. */
@@ -83,6 +86,10 @@ export interface TradePlan {
   rr2: number | null;
   /** ATR-based stop distance in USD (also risk per 1.0 lot). */
   stopDistance: number | null;
+  /** Timeframe whose ATR sized the stop — differs for scalp vs swing plans. */
+  basisTf: TF;
+  /** Quote spread (ask − bid) in USD; added to the stop distance as trading cost. */
+  spread: number | null;
   /** Execution instruction: order type to place + Indonesian keterangan. */
   action: PlanAction;
 }
@@ -111,6 +118,8 @@ export interface TradeRecord {
   exitPrice: number | null;
   confidence: number;
   setupType: string;
+  /** TF whose ATR sized the stop; also decides the unfilled-order TTL. */
+  basisTf: TF;
   reasons: string[];
 }
 

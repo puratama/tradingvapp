@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callTool, mcpHealth, onQuotePush, startQuoteStream } from './mcp.js';
 import { computeAnalysis } from './analysis/signal.js';
+import type { Style } from './analysis/signal.js';
 import { fetchCalendar } from './news/enrich.js';
 import { listTrades, recordSignal, resolveTrades } from './trades.js';
 import { TIMEFRAMES } from '../shared/types.js';
@@ -16,8 +17,9 @@ import type { Analysis, Candle, NewsEvent, Quote, TF } from '../shared/types.js'
 const PORT = Number(process.env.PORT ?? 3001);
 const HOST = process.env.HOST ?? '127.0.0.1';
 const SYMBOL = process.env.XAUUSD_SYMBOL ?? 'OANDA:XAUUSD';
-const TF_INTERVAL: Record<TF, string> = { M5: '5m', M15: '15m', H1: '1h', H4: '4h', D1: '1D' };
+const TF_INTERVAL: Record<TF, string> = { M1: '1m', M5: '5m', M15: '15m', H1: '1h', H4: '4h', D1: '1D' };
 const BARS_FOR_ANALYSIS = 300;
+const styleFromEnv = (): Style => (process.env.ENTRY_STYLE === 'scalp' ? 'scalp' : 'swing');
 
 interface RawBar {
   time: number;
@@ -85,8 +87,8 @@ async function fetchQuote(): Promise<Quote | null> {
 
 /** TradingView rating shape varies; extract an [-2..2] aggregate per timeframe. */
 function extractRating(raw: unknown): Record<TF, number | null> {
-  const out: Record<TF, number | null> = { M5: null, M15: null, H1: null, H4: null, D1: null };
-  const keyFor: Record<TF, string> = { M5: '5', M15: '15', H1: '60', H4: '240', D1: '1D' };
+  const out: Record<TF, number | null> = { M1: null, M5: null, M15: null, H1: null, H4: null, D1: null };
+  const keyFor: Record<TF, string> = { M1: '1', M5: '5', M15: '15', H1: '60', H4: '240', D1: '1D' };
   if (!raw || typeof raw !== 'object') return out;
   const table = raw as Record<string, unknown>;
   for (const tf of TIMEFRAMES) {
@@ -107,7 +109,7 @@ async function fetchRatings(): Promise<Record<TF, number | null>> {
     const { data } = await callTool<unknown>('get_technical_analysis', { symbol: SYMBOL });
     return extractRating(data);
   } catch {
-    return { M5: null, M15: null, H1: null, H4: null, D1: null };
+    return { M1: null, M5: null, M15: null, H1: null, H4: null, D1: null };
   }
 }
 
@@ -115,15 +117,16 @@ interface AnalysisCache {
   value: Analysis;
   generatedAtMs: number;
 }
-let analysisCache: AnalysisCache | null = null;
-let analysisInFlight: Promise<Analysis> | null = null;
+/** Analysis is computed per entry style; the stream ticker keeps 'swing'. */
+const analysisCaches = new Map<string, AnalysisCache>();
+const analysisInFlight = new Map<string, Promise<Analysis>>();
 
 /** A cached analysis is never served older than MAX; the stream ticker may
  *  recompute sooner (down to MIN) when the price has moved materially. */
 const ANALYSIS_MIN_AGE_MS = 8_000;
 const ANALYSIS_MAX_AGE_MS = 20_000;
 
-async function computeAnalysisFull(): Promise<Analysis> {
+async function computeAnalysisFull(style?: Style): Promise<Analysis> {
   const [candleSets, quote, ratings, events] = await Promise.all([
     Promise.all(TIMEFRAMES.map((tf) => fetchCandles(tf, BARS_FOR_ANALYSIS))),
     fetchQuote(),
@@ -132,25 +135,22 @@ async function computeAnalysisFull(): Promise<Analysis> {
   ]);
 
   const candles = Object.fromEntries(TIMEFRAMES.map((tf, i) => [tf, candleSets[i]])) as Record<TF, Candle[]>;
-  const value = computeAnalysis({ symbol: SYMBOL, quote, candles, tvRatings: ratings, events });
-  analysisCache = { value, generatedAtMs: Date.now() };
+  const value = computeAnalysis({ symbol: SYMBOL, quote, candles, tvRatings: ratings, events, style });
+  analysisCaches.set(style ?? styleFromEnv(), { value, generatedAtMs: Date.now() });
   await recordSignal(value, value.generatedAt);
   return value;
 }
 
-/** Single-flight: REST handler and stream ticker share one compute. */
-function recomputeAnalysis(): Promise<Analysis> {
-  if (!analysisInFlight) {
-    analysisInFlight = computeAnalysisFull().finally(() => {
-      analysisInFlight = null;
-    });
-  }
-  return analysisInFlight;
-}
-
-async function getAnalysis(): Promise<Analysis> {
-  if (analysisCache && Date.now() - analysisCache.generatedAtMs < ANALYSIS_MAX_AGE_MS) return analysisCache.value;
-  return recomputeAnalysis();
+/** Single-flight per style: the REST handler and stream ticker share one compute. */
+async function getAnalysis(style?: Style): Promise<Analysis> {
+  const key = style ?? styleFromEnv();
+  const cached = analysisCaches.get(key);
+  if (cached && Date.now() - cached.generatedAtMs < ANALYSIS_MAX_AGE_MS) return cached.value;
+  const inFlight = analysisInFlight.get(key);
+  if (inFlight) return inFlight;
+  const next = computeAnalysisFull(style).finally(() => analysisInFlight.delete(key));
+  analysisInFlight.set(key, next);
+  return next;
 }
 
 const app = express();
@@ -174,9 +174,9 @@ app.get('/api/candles', async (req, res, next) => {
   }
 });
 
-app.get('/api/analysis', async (_req, res, next) => {
+app.get('/api/analysis', async (req, res, next) => {
   try {
-    res.json(await getAnalysis());
+    res.json(await getAnalysis(req.query.style === 'scalp' ? 'scalp' : undefined));
   } catch (err) {
     next(err);
   }
@@ -217,10 +217,12 @@ function broadcast(event: string, data: unknown): void {
   for (const res of streamClients) res.write(payload);
 }
 
-/** Recompute the plan once price moved ~0.2×ATR(H1) since it was generated. */
+/** Recompute the plan once price moved ~0.2×ATR of the plan's own basis TF:
+ *  an M5 scalp plan needs a far tighter trigger than an H1 swing plan. */
 function analysisPriceMoved(analysis: Analysis, price: number): boolean {
-  const atrH1 = analysis.mtf.find((m) => m.tf === 'H1')?.atr ?? 0;
-  const threshold = Math.max(0.2 * atrH1, 0.25);
+  const basisTf = analysis.plan.basisTf;
+  const atrBasis = analysis.mtf.find((m) => m.tf === basisTf)?.atr ?? 0;
+  const threshold = Math.max(0.2 * atrBasis, 0.25);
   const ref = analysis.quote?.last ?? null;
   return ref !== null && Math.abs(price - ref) >= threshold;
 }
@@ -236,11 +238,11 @@ async function streamTick(): Promise<void> {
   }
 
   await tickTrades(quote);
-  const cached = analysisCache;
+  const cached = analysisCaches.get(styleFromEnv()) ?? null;
   const ageMs = cached ? Date.now() - cached.generatedAtMs : Number.POSITIVE_INFINITY;
   const moved = cached !== null && quote !== null && analysisPriceMoved(cached.value, quote.last);
   if (!cached || ageMs >= ANALYSIS_MAX_AGE_MS || (moved && ageMs >= ANALYSIS_MIN_AGE_MS)) {
-    broadcast('analysis', await recomputeAnalysis());
+    broadcast('analysis', await getAnalysis());
   }
 }
 

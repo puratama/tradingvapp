@@ -9,6 +9,7 @@
 import type {
   Analysis,
   Candle,
+  EntryStyle,
   Level,
   NewsEvent,
   Pattern,
@@ -24,7 +25,9 @@ import { buildLevels, classifyTrend } from './structure.js';
 import { detectPatterns } from './patterns.js';
 import { assessNewsRisk } from '../news/enrich.js';
 
-const TF_WEIGHT: Record<TF, number> = { D1: 3, H4: 3, H1: 2, M15: 1, M5: 1 };
+const TF_WEIGHT: Record<TF, number> = { D1: 3, H4: 3, H1: 2, M15: 1, M5: 1, M1: 0 };
+/** Scalp weights: the entry timeframes dominate, D1/M1 only colour the bias. */
+const SCALP_WEIGHT: Record<TF, number> = { D1: 1, H4: 1, H1: 2, M15: 2, M5: 3, M1: 1 };
 const ENTRY_TF: TF = 'H1';
 
 export interface SignalInput {
@@ -34,6 +37,8 @@ export interface SignalInput {
   /** TradingView aggregate rating [-2..2] per timeframe, null if unavailable. */
   tvRatings: Record<TF, number | null>;
   events: NewsEvent[];
+  /** Trade style override; defaults to ENTRY_STYLE env (swing unless 'scalp'). */
+  style?: Style;
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -116,8 +121,35 @@ function describeAction(direction: 'BUY' | 'SELL', entry: number, priceNow: numb
       };
 }
 
-function planPrices(direction: 'BUY' | 'SELL', snap: TfSnapshot, candles: Candle[]): TradePlan {
-  const atrH1 = Math.max(snap.atr, 0.1);
+/** Stop/target geometry per trade style. Swing keeps the original H1 grid. */
+interface PlanGrid {
+  /** Buffer beyond the swing extreme, in basis-TF ATRs. */
+  buffer: number;
+  /** Minimum stop distance beyond the structural stop, in ATRs. */
+  minStop: number;
+  /** Hard clamp of the final stop distance, in ATRs. */
+  clamp: [number, number];
+  tp1Risk: number;
+  tp2Risk: number;
+}
+
+/** Trade style lives in shared types so the client toggle uses the same union. */
+export type Style = EntryStyle;
+
+export const GRIDS: Record<Style, { basisTf: TF; grid: PlanGrid }> = {
+  swing: { basisTf: 'H1', grid: { buffer: 0.15, minStop: 1.2, clamp: [0.8, 2.6], tp1Risk: 1.5, tp2Risk: 2.5 } },
+  scalp: { basisTf: 'M5', grid: { buffer: 0.1, minStop: 0.5, clamp: [0.6, 1.5], tp1Risk: 1, tp2Risk: 1.6 } },
+};
+
+/** Exported for the pure self-check (server/analysis/signal.test.ts). */
+export function planPrices(
+  direction: 'BUY' | 'SELL',
+  basis: TfSnapshot,
+  candles: Candle[],
+  { buffer, minStop, clamp, tp1Risk, tp2Risk }: PlanGrid,
+): TradePlan {
+  const atrBasis = Math.max(basis.atr, 0.05);
+  const tf = basis.tf;
   const closed = candles.slice(0, -1);
   const last12 = closed.slice(-12);
   const last30 = closed.slice(-30);
@@ -125,17 +157,17 @@ function planPrices(direction: 'BUY' | 'SELL', snap: TfSnapshot, candles: Candle
     direction === 'BUY'
       ? Math.max(...last30.map((c) => c.high))
       : Math.min(...last30.map((c) => c.low));
-  const priceNow = closed[closed.length - 1]?.close ?? snap.close;
-  const distToEma = direction === 'BUY' ? priceNow - snap.ema20 : snap.ema20 - priceNow;
+  const priceNow = closed[closed.length - 1]?.close ?? basis.close;
+  const distToEma = direction === 'BUY' ? priceNow - basis.ema20 : basis.ema20 - priceNow;
 
   let setupType: string;
   let entry: number;
   if (direction === 'BUY' ? priceNow > breakoutLevel : priceNow < breakoutLevel) {
-    setupType = 'Breakout — lanjutan tren menembus swing 30 bar H1';
+    setupType = `Breakout — lanjutan tren menembus swing 30 bar ${tf}`;
     entry = priceNow;
-  } else if (distToEma > 0.6 * atrH1) {
-    setupType = 'Pullback — limit di zona EMA20 H1';
-    entry = snap.ema20;
+  } else if (distToEma > 0.6 * atrBasis) {
+    setupType = `Pullback — limit di zona EMA20 ${tf}`;
+    entry = basis.ema20;
   } else {
     setupType = 'Pantulan langsung di sekitar harga saat ini';
     entry = priceNow;
@@ -146,19 +178,19 @@ function planPrices(direction: 'BUY' | 'SELL', snap: TfSnapshot, candles: Candle
       ? Math.min(...last12.map((c) => c.low))
       : Math.max(...last12.map((c) => c.high));
 
-  let sl =
+  const slRaw =
     direction === 'BUY'
-      ? Math.min(swingExtreme - 0.15 * atrH1, entry - 1.2 * atrH1)
-      : Math.max(swingExtreme + 0.15 * atrH1, entry + 1.2 * atrH1);
+      ? Math.min(swingExtreme - buffer * atrBasis, entry - minStop * atrBasis)
+      : Math.max(swingExtreme + buffer * atrBasis, entry + minStop * atrBasis);
 
-  // Clamp stop distance to [0.8 ATR, 2.6 ATR].
-  const rawDist = Math.abs(entry - sl);
-  const capped = Math.min(Math.max(rawDist, 0.8 * atrH1), 2.6 * atrH1);
-  sl = direction === 'BUY' ? entry - capped : entry + capped;
+  // Clamp stop distance to the style's ATR band.
+  const rawDist = Math.abs(entry - slRaw);
+  const capped = Math.min(Math.max(rawDist, clamp[0] * atrBasis), clamp[1] * atrBasis);
+  const sl = direction === 'BUY' ? entry - capped : entry + capped;
 
   const risk = Math.abs(entry - sl);
-  const tp1 = direction === 'BUY' ? entry + 1.5 * risk : entry - 1.5 * risk;
-  const tp2 = direction === 'BUY' ? entry + 2.5 * risk : entry - 2.5 * risk;
+  const tp1 = direction === 'BUY' ? entry + tp1Risk * risk : entry - tp1Risk * risk;
+  const tp2 = direction === 'BUY' ? entry + tp2Risk * risk : entry - tp2Risk * risk;
 
   return {
     verdict: direction,
@@ -168,36 +200,54 @@ function planPrices(direction: 'BUY' | 'SELL', snap: TfSnapshot, candles: Candle
     sl: round2(sl),
     tp1: round2(tp1),
     tp2: round2(tp2),
-    rr1: 1.5,
-    rr2: 2.5,
+    rr1: tp1Risk,
+    rr2: tp2Risk,
     stopDistance: round2(risk),
+    basisTf: tf,
+    spread: 0,
     action: describeAction(direction, entry, priceNow),
   };
+}
+
+/** Spread in USD from the quote, when both sides are present and sane. */
+function quoteSpread(quote: Quote | null): number | null {
+  if (!quote || quote.ask === null || quote.bid === null) return null;
+  const spread = quote.ask - quote.bid;
+  return Number.isFinite(spread) && spread > 0 ? round2(spread) : null;
 }
 
 export function computeAnalysis(input: SignalInput): Analysis {
   const nowSec = Math.floor(Date.now() / 1000);
   const { candles, quote, tvRatings, events } = input;
+  const style: Style = input.style ?? (process.env.ENTRY_STYLE === 'scalp' ? 'scalp' : 'swing');
+  const spread = quoteSpread(quote);
 
   const mtf: TfSnapshot[] = TIMEFRAMES.map((tf) => buildSnapshot(candles[tf], tf));
   const snap: Record<TF, TfSnapshot> = Object.fromEntries(mtf.map((s) => [s.tf, s])) as Record<TF, TfSnapshot>;
 
+  const weights = style === 'scalp' ? SCALP_WEIGHT : TF_WEIGHT;
   const bias =
-    mtf.reduce((acc, s) => acc + s.trendScore * TF_WEIGHT[s.tf], 0) /
-    mtf.reduce((acc, s) => acc + TF_WEIGHT[s.tf], 0);
+    mtf.reduce((acc, s) => acc + s.trendScore * weights[s.tf], 0) /
+    mtf.reduce((acc, s) => acc + weights[s.tf], 0);
 
   const priceNow = quote?.last ?? snap[ENTRY_TF].close;
-  const levels = buildLevels(candles.H4, candles.H1, candles.D1, priceNow);
+  // Scalp levels come from the lower timeframes the trade actually lives on.
+  const levels =
+    style === 'scalp'
+      ? buildLevels(candles.H1, candles.M15, candles.H4, priceNow)
+      : buildLevels(candles.H4, candles.H1, candles.D1, priceNow);
   const patterns: Pattern[] = [
     ...detectPatterns(candles.M5, 'M5'),
     ...detectPatterns(candles.M15, 'M15'),
     ...detectPatterns(candles.H1, 'H1'),
     ...detectPatterns(candles.H4, 'H4', 2),
   ];
-  const newsRisk = assessNewsRisk(events, nowSec);
+  // Scalp trades live minutes, not hours: only the release itself blocks them.
+  const newsRisk = assessNewsRisk(events, nowSec, style === 'scalp' ? 15 * 60 : 3600);
 
+  const weightLabel = style === 'scalp' ? 'D1:H4:H1:M15:M5:M1 = 1:1:2:2:3:1' : 'D1:H4:H1:M15:M5 = 3:3:2:1:1';
   const reasons: string[] = [
-    `Bias multi-timeframe (D1:H4:H1:M15:M5 = 3:3:2:1:1): skor ${bias >= 0 ? '+' : ''}${bias.toFixed(2)} — ${
+    `Bias multi-timeframe (${weightLabel}): skor ${bias >= 0 ? '+' : ''}${bias.toFixed(2)} — ${
       bias > 0.25 ? 'cenderung BUY' : bias < -0.25 ? 'cenderung SELL' : 'netral / ranging'
     }.`,
   ];
@@ -222,6 +272,8 @@ export function computeAnalysis(input: SignalInput): Analysis {
       rr1: null,
       rr2: null,
       stopDistance: null,
+      basisTf: ENTRY_TF,
+      spread,
       action: {
         kind: 'HOLD',
         label: 'Tunggu',
@@ -312,8 +364,10 @@ export function computeAnalysis(input: SignalInput): Analysis {
     addPoint(ctx, 1, `${nearby.label} ${nearby.price.toFixed(2)} di dekat harga — pijakan ${up ? 'support' : 'resistance'} untuk entry.`);
   }
 
-  // Assemble plan
-  const plan = planPrices(direction, snap.H1, candles.H1);
+  // Assemble plan — stop geometry comes from the style's basis timeframe.
+  const { basisTf, grid } = GRIDS[style];
+  const plan = planPrices(direction, snap[basisTf], candles[basisTf], grid);
+  plan.spread = spread;
   plan.confidence = Math.min(95, Math.max(10, Math.round(50 + 6.5 * ctx.points)));
   reasons.push(...ctx.reasons);
   warnings.push(...ctx.warnings);
@@ -347,18 +401,26 @@ export function computeAnalysis(input: SignalInput): Analysis {
     };
   }
 
-  // Human-readable plan rationale
-  if (plan.entry !== null && plan.sl !== null && plan.tp1 !== null && plan.tp2 !== null) {
+  // Human-readable plan rationale — distances in the basis TF's ATRs.
+  if (plan.entry !== null && plan.sl !== null && plan.tp1 !== null && plan.tp2 !== null && plan.stopDistance !== null) {
+    const atrBasis = Math.max(snap[basisTf].atr, 0.05);
+    const costNote =
+      spread !== null
+        ? ` Spread ${spread.toFixed(2)} masuk sebagai biaya: risiko efektif ${(plan.stopDistance + spread).toFixed(2)} USD.`
+        : '';
     reasons.push(
-      `Rencana ${direction}: entry ${plan.entry.toFixed(2)} (${plan.setupType.split('—')[0].trim()}), SL ${plan.sl.toFixed(2)} (jarak ${plan.stopDistance?.toFixed(2)} ≈ ${(plan.stopDistance! / atrH1).toFixed(1)}× ATR H1), TP1 ${plan.tp1.toFixed(2)}, TP2 ${plan.tp2.toFixed(2)}.`,
+      `Rencana ${style} ${direction}: entry ${plan.entry.toFixed(2)} (${plan.setupType.split('—')[0].trim()}), SL ${plan.sl.toFixed(2)} (jarak ${plan.stopDistance.toFixed(2)} ≈ ${(plan.stopDistance / atrBasis).toFixed(1)}× ATR ${basisTf}), TP1 ${plan.tp1.toFixed(2)} (${plan.rr1}R), TP2 ${plan.tp2.toFixed(2)} (${plan.rr2}R).${costNote}`,
     );
     const conflicts = levels.filter(
       (lv) =>
-        Math.abs(lv.price - plan.tp2!) < 0.4 * atrH1 &&
+        Math.abs(lv.price - plan.tp2!) < 0.4 * atrBasis &&
         (direction === 'BUY' ? lv.price > plan.entry! : lv.price < plan.entry!),
     );
     for (const lv of conflicts) {
       warnings.push(`TP2 ${plan.tp2!.toFixed(2)} berimpit dengan ${lv.label.toLowerCase()} ${lv.price.toFixed(2)} — pertimbangkan ambil untung parsial.`);
+    }
+    if (style === 'scalp' && spread !== null && spread > plan.stopDistance * 0.25) {
+      warnings.push(`Spread ${spread.toFixed(2)} > 25% jarak SL — setelah biaya RR efektif turun; pertimbangkan skip trade ini.`);
     }
   }
 

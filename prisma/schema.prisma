@@ -23,6 +23,7 @@ model Trade {
   exitPrice  Float?  @map("exit_price")
   confidence Float
   setupType  String  @map("setup_type")
+  basisTf    String  @default("H1") @map("basis_tf") // TF penentu ATR stop: M5 scalp, H1 swing
   action     String // JSON string PlanAction
   reasons    String // JSON string string[]
 

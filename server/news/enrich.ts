@@ -147,12 +147,20 @@ export async function fetchCalendar(window: CalendarWindow = {}): Promise<NewsEv
   const hoursAhead = window.hoursAhead ?? 24 * 8;
   const nowSec = Math.floor(Date.now() / 1000);
 
-  const { data } = await callTool<{ count: number; events: RawEvent[] }>('get_economic_calendar', {
-    currencies: CALENDAR_CURRENCIES,
-    min_importance: -1,
-  });
+  // A dead calendar feed must not take the whole analysis down: the gate is a
+  // filter, so its absence degrades to "no news events" and a warning.
+  let raw: RawEvent[] = [];
+  try {
+    const { data } = await callTool<{ count: number; events: RawEvent[] }>('get_economic_calendar', {
+      currencies: CALENDAR_CURRENCIES,
+      min_importance: -1,
+    });
+    raw = data.events ?? [];
+  } catch (err) {
+    console.error('[news] calendar unavailable:', err instanceof Error ? err.message : err);
+  }
 
-  return (data.events ?? [])
+  return raw
     .map(enrichEvent)
     .filter((ev) => !Number.isNaN(ev.timestamp))
     .filter((ev) => ev.timestamp >= nowSec - hoursBehind * 3600 && ev.timestamp <= nowSec + hoursAhead * 3600)
@@ -167,9 +175,11 @@ function countdownText(seconds: number): string {
   return rest ? `${hours}j ${rest}m` : `${hours} jam`;
 }
 
-/** News gate for entries: high-impact events near "now" force a wait. */
-export function assessNewsRisk(events: NewsEvent[], nowSec: number): NewsRisk {
-  const nextHighImpact = events.find((ev) => ev.impact === 'High' && ev.timestamp > nowSec - 5 * 60) ?? null;
+/** News gate for entries: high-impact events near "now" force a wait.
+ *  `windowSec` widens the blackout; scalping only needs the release itself. */
+export function assessNewsRisk(events: NewsEvent[], nowSec: number, windowSec = 3600): NewsRisk {
+  const nextHighImpact =
+    events.find((ev) => ev.impact === 'High' && ev.timestamp > nowSec - Math.min(5 * 60, windowSec)) ?? null;
   if (!nextHighImpact) {
     return {
       level: 'none',
@@ -182,7 +192,7 @@ export function assessNewsRisk(events: NewsEvent[], nowSec: number): NewsRisk {
   const when = delta > 0 ? `dalam ${countdownText(delta)}` : `baru saja dirilis (${countdownText(-delta)} lalu)`;
   const label = `"${nextHighImpact.title}" (${nextHighImpact.currency}, ${nextHighImpact.impact})`;
 
-  if (Math.abs(delta) <= 3600) {
+  if (Math.abs(delta) <= windowSec) {
     return {
       level: 'high',
       note: `Hindari entry baru dekat rilis ${label} ${when} — spread melebar dan candle bisa wick liar.`,

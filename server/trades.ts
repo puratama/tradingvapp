@@ -7,14 +7,19 @@
 import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '../prisma/generated/client.js';
 import { PrismaPg } from '@prisma/adapter-pg';
-import type { Analysis, PlanAction, Quote, TradeRecord } from '../shared/types.js';
+import type { Analysis, PlanAction, Quote, TF, TradeRecord } from '../shared/types.js';
+import type { Style } from './analysis/signal.js';
 
-/** Unfilled orders expire after one hour — otherwise a pending limit the price
- *  never reaches blocks every same-direction signal forever. */
-export const WAITING_TTL_SEC = 60 * 60;
-
+/** Unfilled orders expire — otherwise a pending limit the price never reaches
+ *  blocks every same-direction signal forever. Scalp plans live minutes, so an
+ *  hour-long TTL would let a dead M5 signal block entries. */
+const WAITING_TTL_SEC: Record<Style, number> = { swing: 60 * 60, scalp: 10 * 60 };
 const OPEN_STATUSES = ['WAITING', 'RUNNING'];
 
+/** Style is derived from the plan's basis TF, never stored: no extra column. */
+function styleOf(basisTf: TF): Style {
+  return basisTf === 'M1' || basisTf === 'M5' ? 'scalp' : 'swing';
+}
 /** Wire shape of the Prisma `Trade` model (BIGINT columns come back as bigint). */
 interface RawTrade {
   id: string;
@@ -30,6 +35,7 @@ interface RawTrade {
   exitPrice: number | null;
   confidence: number;
   setupType: string;
+  basisTf: string;
   action: string;
   reasons: string;
 }
@@ -55,6 +61,7 @@ function toRecord(r: RawTrade): TradeRecord {
     exitPrice: r.exitPrice === null ? null : Number(r.exitPrice),
     confidence: Number(r.confidence),
     setupType: r.setupType,
+    basisTf: r.basisTf as TF,
     reasons: JSON.parse(r.reasons) as string[],
   };
 }
@@ -85,6 +92,7 @@ async function persist(t: TradeRecord): Promise<void> {
       exitPrice: t.exitPrice,
       confidence: t.confidence,
       setupType: t.setupType,
+      basisTf: t.basisTf,
       action: JSON.stringify(t.action),
       reasons: JSON.stringify(t.reasons),
     },
@@ -97,11 +105,12 @@ async function persist(t: TradeRecord): Promise<void> {
  * ORDERING INVARIANTS — cash-settled XAUUSD, broker feed, no OHLC:
  *  - an expired unfilled order becomes EXPIRED before any price check
  *  - an invalid price (absent or <= 0) resolves nothing but still expires
- *  - a filled position that takes both SL and TP on the same tick takes SL
+ *  - TP is tested before SL, so a tick that spans both books TP (optimistic;
+ *    a gap-through scenario is indistinguishable without OHLC)
  */
 export function resolveTrade(trade: TradeRecord, price: number, nowSec: number): TradeRecord {
   if (trade.status !== 'WAITING' && trade.status !== 'RUNNING') return trade;
-  if (!trade.filled && nowSec - trade.createdAt >= WAITING_TTL_SEC) {
+  if (!trade.filled && nowSec - trade.createdAt >= WAITING_TTL_SEC[styleOf(trade.basisTf)]) {
     return { ...trade, status: 'EXPIRED', closedAt: nowSec };
   }
   if (!(price > 0)) return trade; // absent/zero wire price (missing lp) — never resolve
@@ -147,11 +156,11 @@ export async function resolveTrades(quote: Quote | null, nowSec: number): Promis
 export async function recordSignal(analysis: Analysis, nowSec: number): Promise<TradeRecord | null> {
   const { plan } = analysis;
   if (plan.verdict === 'WAIT' || plan.entry === null || plan.sl === null || plan.tp1 === null) return null;
-  const open = await db().trade.findFirst({
+  // A scalp signal must not be blocked by an open swing order (nor vice versa).
+  const open = (await db().trade.findMany({
     where: { status: { in: OPEN_STATUSES }, direction: plan.verdict },
-    select: { id: true },
-  });
-  if (open) return null;
+  })) as RawTrade[];
+  if (open.some((r) => styleOf(r.basisTf as TF) === styleOf(plan.basisTf))) return null;
   const trade: TradeRecord = {
     id: randomUUID(),
     createdAt: nowSec,
@@ -167,6 +176,7 @@ export async function recordSignal(analysis: Analysis, nowSec: number): Promise<
     exitPrice: null,
     confidence: plan.confidence,
     setupType: plan.setupType,
+    basisTf: plan.basisTf,
     reasons: analysis.reasons,
   };
   await persist(trade);

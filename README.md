@@ -81,6 +81,24 @@ juga didorong realtime ke UI lewat event SSE `trades`.
    swing 30 bar; SL di bawah swing terdekat dengan jarak diklamp [0.8×, 2.6×] ATR H1;
    TP1 = 1.5R, TP2 = 2.5R.
 
+### Gaya entry (`ENTRY_STYLE` / `?style=`)
+
+Satu mesin, dua grid stop/target. Default `swing`; `scalp` memakai basis ATR lebih rendah.
+
+| Aspek | `swing` | `scalp` |
+|---|---|---|
+| Basis ATR | H1 | M5 |
+| Bobot bias | D1:H4:H1:M15:M5 = 3:3:2:1:1 | D1:H4:H1:M15:M5:M1 = 1:1:2:2:3:1 |
+| Jarak SL | 0.8–2.6× ATR H1 | 0.6–1.5× ATR M5 |
+| RR | 1.5 / 2.5 | 1.0 / 1.6 |
+| Jendela news | ±60 menit | ±15 menit |
+| Level struktur | H4/H1/D1 | H1/M15/H4 |
+
+`GET /api/analysis?style=scalp` menghitung gaya scalp tanpa mengubah env; SSE tetap memakai
+`ENTRY_STYLE`. `TradePlan.spread` (ask − bid) dihitung sebagai biaya — kalkulator risiko memakai
+`stopDistance + spread` sebagai risiko per ounce, dan SL scalp yang lebih kecil dari 4× spread
+memunculkan peringatan eksplisit.
+
 Semua keputusan disertai **alasan dan peringatan** yang bisa dibaca di panel — tidak ada
 keputusan hitam-putih tanpa penjelasan.
 
