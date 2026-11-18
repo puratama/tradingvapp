@@ -156,6 +156,8 @@ dan 2021–2026):
   > 8% jarak SL (mengubah scalp 2024–2026 dari ±0.00 jadi **+0.034** R/trade,
   tiga-tiganya tahun positif). Filter sesi jam likuid (07–20 UTC) menaikkan
   rata-rata ke +0.059 tapi membuat 2026 negatif → tidak diadopsi.
+  Ambang 7 poin untuk scalp ditolak: −0.079 R/trade dan 2024–2026 justru
+  negatif — edge ada di sinyal 6-poin, bukan di kualitas tertinggi.
 
 Validasi 12 tahun config C (2015–2026, resolusi M1, net R/trade):
 
