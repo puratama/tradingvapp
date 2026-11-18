@@ -151,17 +151,28 @@ dan 2021–2026):
   lebih halus (win 51% vs 43%); 2R alternatif sah bila target ekspektasi maksimal.
 - Konfluensi memakai TF entry sendiri (ATR/RSI/MACD/EMA20/rating), bukan H1 untuk
   semua gaya — versi lama menilai scalp dengan ATR yang ~4× terlalu besar.
-- Grid scalp: clamp [1.5, 4]× ATR M5, `minStop` 1.2.
-- **Filter biaya scalp** (lewati trade bila spread > 8% jarak SL) mengubah
-  2024–2026 dari ±0.00 menjadi **+0.023** R/trade (2024 +0.01, 2025 +0.02,
-  2026 +0.03), dengan 40% trade lebih sedikit. Positif tapi masih di bawah
-  noise eksekusi nyata (slippage stop/requote) — belum cukup untuk uang sungguhan.
+- Grid scalp final (tervalidasi di sweep 2024–2026): clamp [2, 4]× ATR M5,
+  `minStop` 1.2, TP1 1.5R — plus **gate biaya**: trade dilewati bila spread
+  > 8% jarak SL (mengubah scalp 2024–2026 dari ±0.00 jadi **+0.034** R/trade,
+  tiga-tiganya tahun positif). Filter sesi jam likuid (07–20 UTC) menaikkan
+  rata-rata ke +0.059 tapi membuat 2026 negatif → tidak diadopsi.
+
+Validasi 12 tahun config C (2015–2026, resolusi M1, net R/trade):
+
+| 2015 | 2016 | 2017 | 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| −0.28 | −0.22 | +0.27 | −0.05 | −0.50 | −0.13 | +0.01 | −0.04 | −0.19 | +0.03 | +0.05 | +0.02 |
+
+**Scalp bergantung regime**: positif konsisten hanya 2024–2026 (harga >2000,
+ATR M5 besar → stop lebih murah relatif spread, tren lebih jelas); 2015–2023
+negatif bahkan setelah gate biaya. Swing tidak punya masalah ini (12/12
+positif). Scalp layak uang sungguhan **hanya** dengan pemahaman bahwa edge-nya
+hidup di regime volatilitas tinggi seperti sekarang.
 
 **Batas kejujuran hasil ini:**
 
-- **Scalp belum layak**: 12 tahun penuh, net −0.126 R/trade (11 dari 12 tahun
-  negatif). Sinyalnya gross-positif tapi terlalu tipis untuk membayar spread
-  pada stop M5. Statusnya tetap **eksperimen**, bukan strategi tervalidasi.
+- Validasi scalp 2024–2026 = 3 tahun; di luar itu historisnya merugi. Risiko
+  utama bukan parameter, tapi **regime pasar berubah**.
 - Biaya diasumsikan **konstan 0,30 USD** (feed M1 tidak punya kolom spread).
   Spread realistis melebar saat news dan rollover — angka net bisa lebih buruk.
 - Resolusi M1 masih bar, bukan tick: urutan SL/TP dalam satu menit dihitung

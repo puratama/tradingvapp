@@ -37,11 +37,12 @@ const [scalpLo, scalpHi] = GRIDS.scalp.grid.clamp;
 assert.ok(scalpStop >= scalpLo * 2 - 0.01, `scalp stop too tight: ${scalpStop}`);
 assert.ok(scalpStop <= scalpHi * 2 + 0.01, `scalp stop too wide: ${scalpStop}`);
 
-// RR is the grid's, and targets follow from it — never a constant 1.5/2.5.
-assert.equal(scalp.rr1, 1);
-assert.equal(scalp.rr2, 1.6);
-assert.equal(Number((scalp.tp1! - scalp.entry!).toFixed(2)), scalpStop);
-assert.equal(Number((scalp.tp2! - scalp.entry!).toFixed(2)), Number((1.6 * scalpStop).toFixed(2)));
+// RR is the grid's, and targets follow from it — never hard-coded.
+const grid = GRIDS.scalp.grid;
+assert.equal(scalp.rr1, grid.tp1Risk);
+assert.equal(scalp.rr2, grid.tp2Risk);
+assert.equal(Number((scalp.tp1! - scalp.entry!).toFixed(2)), Number((grid.tp1Risk * scalpStop).toFixed(2)));
+assert.equal(Number((scalp.tp2! - scalp.entry!).toFixed(2)), Number((grid.tp2Risk * scalpStop).toFixed(2)));
 
 // Direction invariant: BUY stops below entry, targets above.
 assert.ok(scalp.sl! < scalp.entry! && scalp.tp1! > scalp.entry! && scalp.tp2! > scalp.tp1!);
@@ -51,6 +52,6 @@ assert.ok(scalp.sl! < scalp.entry! && scalp.tp1! > scalp.entry! && scalp.tp2! > 
 const sell = planPrices('SELL', snapshot('M5', 2), bars(), GRIDS.scalp.grid);
 assert.ok(sell.sl! > sell.entry! && sell.tp1! < sell.entry! && sell.tp2! < sell.tp1!);
 assert.ok(sell.stopDistance! >= scalpLo * 2 - 0.01 && sell.stopDistance! <= scalpHi * 2 + 0.01);
-assert.equal(Number((sell.entry! - sell.tp1!).toFixed(2)), sell.stopDistance);
+assert.equal(Number((sell.entry! - sell.tp1!).toFixed(2)), Number((grid.tp1Risk * sell.stopDistance!).toFixed(2)));
 
 console.log('signal.test.ts: all assertions passed');

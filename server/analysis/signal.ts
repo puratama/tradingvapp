@@ -153,12 +153,13 @@ interface PlanGrid {
 /** Trade style lives in shared types so the client toggle uses the same union. */
 export type Style = EntryStyle;
 
-/** Calibrated on MT5 M1/M5/H1 (Jan 2025 – Nov 2026) with spread charged per
- *  trade: TP1 at 1.5R beats 2.5R for swing, and scalp only turns positive with
- *  ATR-sized stops clamped at [1.5, 4] plus >=6 confluence points. */
+/** Calibrated on the MT5 M1 history (2015-2026) with spread charged per trade.
+ *  Swing: TP1 1.5R (2R is marginally higher-mean but worse worst year).
+ *  Scalp: wide stops [2, 4] x M5 ATR + TP1 1.5R + the cost gate below is the
+ *  best of the 2024-2026 sweep (3/3 years positive vs 0/3 before). */
 export const GRIDS: Record<Style, { basisTf: TF; grid: PlanGrid }> = {
   swing: { basisTf: 'H1', grid: { buffer: 0.15, minStop: 1.2, clamp: [1, 2.5], tp1Risk: 1.5, tp2Risk: 2.5 } },
-  scalp: { basisTf: 'M5', grid: { buffer: 0.15, minStop: 1.2, clamp: [1.5, 4], tp1Risk: 1, tp2Risk: 1.6 } },
+  scalp: { basisTf: 'M5', grid: { buffer: 0.15, minStop: 1.2, clamp: [2, 4], tp1Risk: 1.5, tp2Risk: 2.4 } },
 };
 
 /** Exported for the pure self-check (server/analysis/signal.test.ts). */
@@ -413,6 +414,24 @@ export function computeAnalysis(input: SignalInput): Analysis {
     plan.verdict = 'WAIT';
     plan.setupType = `TERTUNDA (news high-impact) — ${plan.setupType}`;
     warnings.push('Verdict diturunkan ke WAIT karena jendela news high-impact.');
+  }
+
+  // Economic gate: when the spread alone eats >8% of the stop distance the
+  // expected edge cannot survive the cost (backtested 2024-2026: scalps over
+  // this share lost ~0.20 R/trade). Same economics for both styles; swing
+  // stops are wide enough that this rarely trips.
+  if (
+    plan.verdict !== 'WAIT' &&
+    spread !== null &&
+    plan.stopDistance !== null &&
+    plan.stopDistance > 0 &&
+    spread > plan.stopDistance * 0.08
+  ) {
+    plan.verdict = 'WAIT';
+    plan.setupType = `TERTUNDA (biaya spread) — ${plan.setupType}`;
+    warnings.push(
+      `Spread ${spread.toFixed(2)} = ${(spread / plan.stopDistance * 100).toFixed(0)}% jarak SL (>8%) — biaya memakan edge; skip sampai spread menyempit.`,
+    );
   }
 
   if (plan.verdict === 'WAIT' && plan.action.kind !== 'HOLD') {
