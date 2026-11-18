@@ -30,6 +30,23 @@ const TF_WEIGHT: Record<TF, number> = { D1: 3, H4: 3, H1: 2, M15: 1, M5: 1, M1: 
 const SCALP_WEIGHT: Record<TF, number> = { D1: 1, H4: 1, H1: 2, M15: 2, M5: 3, M1: 1 };
 const ENTRY_TF: TF = 'H1';
 
+/** Confluence rules that must follow the trade's own timeframe. Sizing every
+ *  scalp judgement off H1 ATR mis-scales both the pullback band and the level
+ *  proximity by ~4x (backtested on MT5 M1 2026: see the sweep in README). */
+export interface SignalRules {
+  /** RSI band that counts as healthy momentum for the direction. */
+  rsi: { buy: [number, number]; sell: [number, number] };
+  /** Distance from EMA20 (in own-ATR) that still counts as a pullback zone. */
+  nearEma: number;
+  /** Beyond this many own-ATRs the entry is chasing. */
+  chaseEma: number;
+  /** Winner needs at least this many confluence points (3 = clean, 2 = moderate). */
+  minPoints: number;
+}
+
+export const SWING_RULES: SignalRules = { rsi: { buy: [45, 68], sell: [32, 55] }, nearEma: 0.75, chaseEma: 2, minPoints: 6 };
+export const SCALP_RULES: SignalRules = { rsi: { buy: [40, 72], sell: [28, 60] }, nearEma: 1, chaseEma: 2.5, minPoints: 6 };
+
 export interface SignalInput {
   symbol: string;
   quote: Quote | null;
@@ -136,9 +153,12 @@ interface PlanGrid {
 /** Trade style lives in shared types so the client toggle uses the same union. */
 export type Style = EntryStyle;
 
+/** Calibrated on MT5 M1/M5/H1 (Jan 2025 – Nov 2026) with spread charged per
+ *  trade: TP1 at 1.5R beats 2.5R for swing, and scalp only turns positive with
+ *  ATR-sized stops clamped at [1.5, 4] plus >=6 confluence points. */
 export const GRIDS: Record<Style, { basisTf: TF; grid: PlanGrid }> = {
-  swing: { basisTf: 'H1', grid: { buffer: 0.15, minStop: 1.2, clamp: [0.8, 2.6], tp1Risk: 1.5, tp2Risk: 2.5 } },
-  scalp: { basisTf: 'M5', grid: { buffer: 0.1, minStop: 0.5, clamp: [0.6, 1.5], tp1Risk: 1, tp2Risk: 1.6 } },
+  swing: { basisTf: 'H1', grid: { buffer: 0.15, minStop: 1.2, clamp: [1, 2.5], tp1Risk: 1.5, tp2Risk: 2.5 } },
+  scalp: { basisTf: 'M5', grid: { buffer: 0.15, minStop: 1.2, clamp: [1.5, 4], tp1Risk: 1, tp2Risk: 1.6 } },
 };
 
 /** Exported for the pure self-check (server/analysis/signal.test.ts). */
@@ -221,6 +241,7 @@ export function computeAnalysis(input: SignalInput): Analysis {
   const { candles, quote, tvRatings, events } = input;
   const style: Style = input.style ?? (process.env.ENTRY_STYLE === 'scalp' ? 'scalp' : 'swing');
   const spread = quoteSpread(quote);
+  const basisTf = GRIDS[style].basisTf;
 
   const mtf: TfSnapshot[] = TIMEFRAMES.map((tf) => buildSnapshot(candles[tf], tf));
   const snap: Record<TF, TfSnapshot> = Object.fromEntries(mtf.map((s) => [s.tf, s])) as Record<TF, TfSnapshot>;
@@ -297,6 +318,9 @@ export function computeAnalysis(input: SignalInput): Analysis {
 
   const up = direction === 'BUY';
   const ctx: ScoreContext = { points: 0, reasons: [], warnings: [] };
+  const rules = style === 'scalp' ? SCALP_RULES : SWING_RULES;
+  const momentum = basisTf;
+  const momentumSnap = snap[momentum];
 
   // 1) Higher-timeframe trend agreement
   const h4Aligned = up ? snap.H4.trend === 'UP' : snap.H4.trend === 'DOWN';
@@ -312,30 +336,31 @@ export function computeAnalysis(input: SignalInput): Analysis {
     addWarn(ctx, -1, `D1 berlawanan arah (${trendWord(snap.D1.trend)}) — entry melawan tren jangka panjang.`);
   }
 
-  // 3) Momentum on entry timeframe
-  const rsiH1 = snap.H1.rsi;
-  const healthy = up ? rsiH1 >= 45 && rsiH1 <= 68 : rsiH1 >= 32 && rsiH1 <= 55;
-  const extreme = up ? rsiH1 > 72 : rsiH1 < 28;
-  if (healthy) addPoint(ctx, 1, `RSI H1 ${rsiH1.toFixed(1)} — momentum sehat, masih ada ruang bergerak.`);
-  else if (extreme) addWarn(ctx, -1, `RSI H1 ${rsiH1.toFixed(1)} sudah ${up ? 'overbought' : 'oversold'} — risiko kejar harga.`);
-  else addWarn(ctx, -1, `RSI H1 ${rsiH1.toFixed(1)} belum konfirmasi momentum ${direction}.`);
+  // 3) Momentum on the entry timeframe
+  const rsiEntry = momentumSnap.rsi;
+  const [lo, hi] = up ? rules.rsi.buy : rules.rsi.sell;
+  const healthy = rsiEntry >= lo && rsiEntry <= hi;
+  const extreme = up ? rsiEntry > 72 : rsiEntry < 28;
+  if (healthy) addPoint(ctx, 1, `RSI ${momentum} ${rsiEntry.toFixed(1)} — momentum sehat, masih ada ruang bergerak.`);
+  else if (extreme) addWarn(ctx, -1, `RSI ${momentum} ${rsiEntry.toFixed(1)} sudah ${up ? 'overbought' : 'oversold'} — risiko kejar harga.`);
+  else addWarn(ctx, -1, `RSI ${momentum} ${rsiEntry.toFixed(1)} belum konfirmasi momentum ${direction}.`);
 
-  const h1Hist = macd(candles.H1.map((c) => c.close)).hist;
-  const histNow = lastValue(h1Hist) ?? 0;
-  const histPrev = prevValue(h1Hist) ?? 0;
+  const entryHist = macd(candles[momentum].map((c) => c.close)).hist;
+  const histNow = lastValue(entryHist) ?? 0;
+  const histPrev = prevValue(entryHist) ?? 0;
   const histRising = up ? histNow > histPrev : histNow < histPrev;
-  if (histRising) addPoint(ctx, 1, `Histogram MACD H1 menguat ke ${histNow.toFixed(2)} — momentum sesuai arah.`);
-  else addWarn(ctx, -1, `Histogram MACD H1 melemah (${histNow.toFixed(2)}) — momentum belum mendukung.`);
+  if (histRising) addPoint(ctx, 1, `Histogram MACD ${momentum} menguat ke ${histNow.toFixed(2)} — momentum sesuai arah.`);
+  else addWarn(ctx, -1, `Histogram MACD ${momentum} melemah (${histNow.toFixed(2)}) — momentum belum mendukung.`);
 
-  // 4) Pullback quality vs EMA20 H1
-  const distToEma = up ? priceNow - snap.H1.ema20 : snap.H1.ema20 - priceNow;
-  const atrH1 = Math.max(snap.H1.atr, 0.1);
-  if (distToEma <= 0.75 * atrH1) {
-    addPoint(ctx, 1, `Harga dekat EMA20 H1 (${snap.H1.ema20.toFixed(2)}) — zona entry pullback wajar.`);
-  } else if (distToEma > 2 * atrH1) {
-    addWarn(ctx, -1, `Harga sudah ${(distToEma / atrH1).toFixed(1)}× ATR dari EMA20 H1 — risiko kejar harga tinggi.`);
+  // 4) Pullback quality vs EMA20 of the entry timeframe
+  const distToEma = up ? priceNow - momentumSnap.ema20 : momentumSnap.ema20 - priceNow;
+  const atrEntry = Math.max(momentumSnap.atr, 0.05);
+  if (distToEma <= rules.nearEma * atrEntry) {
+    addPoint(ctx, 1, `Harga dekat EMA20 ${momentum} (${momentumSnap.ema20.toFixed(2)}) — zona entry pullback wajar.`);
+  } else if (distToEma > rules.chaseEma * atrEntry) {
+    addWarn(ctx, -1, `Harga sudah ${(distToEma / atrEntry).toFixed(1)}× ATR ${momentum} dari EMA20 — risiko kejar harga tinggi.`);
   } else {
-    reasons.push(`Jarak ke EMA20 H1 ${(distToEma / atrH1).toFixed(1)}× ATR — masih wajar.`);
+    reasons.push(`Jarak ke EMA20 ${momentum} ${(distToEma / atrEntry).toFixed(1)}× ATR — masih wajar.`);
   }
 
   // 5) Candle trigger
@@ -347,7 +372,7 @@ export function computeAnalysis(input: SignalInput): Analysis {
   }
 
   // 6) TradingView rating confluence
-  const rating = tvRatings.H1 ?? tvRatings.H4;
+  const rating = tvRatings[momentum] ?? tvRatings.H1 ?? tvRatings.H4;
   if (rating !== null && rating !== undefined) {
     const favors = up ? rating > 0.5 : rating < -0.5;
     const against = up ? rating < -0.5 : rating > 0.5;
@@ -358,25 +383,26 @@ export function computeAnalysis(input: SignalInput): Analysis {
 
   // 7) Nearby structure confluence
   const nearby = levels
-    .filter((lv) => Math.abs(lv.price - priceNow) <= 0.5 * atrH1 && (up ? lv.price < priceNow : lv.price > priceNow))
+    .filter((lv) => Math.abs(lv.price - priceNow) <= 0.5 * atrEntry && (up ? lv.price < priceNow : lv.price > priceNow))
     .sort((a, b) => Math.abs(a.price - priceNow) - Math.abs(b.price - priceNow))[0];
   if (nearby) {
     addPoint(ctx, 1, `${nearby.label} ${nearby.price.toFixed(2)} di dekat harga — pijakan ${up ? 'support' : 'resistance'} untuk entry.`);
   }
 
   // Assemble plan — stop geometry comes from the style's basis timeframe.
-  const { basisTf, grid } = GRIDS[style];
-  const plan = planPrices(direction, snap[basisTf], candles[basisTf], grid);
+  const plan = planPrices(direction, momentumSnap, candles[momentum], GRIDS[style].grid);
   plan.spread = spread;
   plan.confidence = Math.min(95, Math.max(10, Math.round(50 + 6.5 * ctx.points)));
   reasons.push(...ctx.reasons);
   warnings.push(...ctx.warnings);
 
-  if (ctx.points >= 3) {
+  if (ctx.points >= rules.minPoints) {
     plan.verdict = direction;
-  } else if (ctx.points === 2) {
+  } else if (ctx.points === rules.minPoints - 1) {
     plan.verdict = direction;
-    warnings.push('Konfirmasi moderat (skor 2) — pertimbangkan risiko lebih kecil atau tunggu candle pemicu berikutnya.');
+    warnings.push(
+      `Konfirmasi moderat (skor ${ctx.points} dari ${rules.minPoints}) — pertimbangkan risiko lebih kecil atau tunggu candle pemicu berikutnya.`,
+    );
   } else {
     plan.verdict = 'WAIT';
     plan.setupType = `Konfirmasi ${direction} belum cukup (skor ${ctx.points}) — ${plan.setupType}`;

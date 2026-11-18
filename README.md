@@ -112,6 +112,37 @@ hitung mundur, serta:
 
 Sumber: feed JSON ForexFactory (gratis). Cakupan default: USD + EUR, GBP, JPY, CHF, CAD, AUD, CNY.
 
+## Kalibrasi dari data MT5
+
+Grid dan ambang konfluensi diukur, bukan ditebak. Backtest memakai ekspor MT5
+`XAUUSD.vx` (H1/H4/M15/M5/M1, Jan 2025 – Nov 2026), sinyal dihitung ulang dari
+bar seperti engine, lalu diselesaikan bar-per-bar dengan **spread historis** dari
+kolom MT5 dibebankan ke setiap trade.
+
+| Gaya | Jendela | Sinyal | Win | Net R/trade |
+|---|---|---|---|---|
+| `swing` | in-sample (Agu–Nov 2026) | 368 | 53.3% | **+0.319** |
+| `swing` | out-of-sample (Jul 2025 – Agu 2026) | 935 | 51.0% | **+0.264** |
+| `scalp` | in-sample, resolusi M1 | 1251 | 53.7% | +0.029 |
+| `scalp` | out-of-sample, resolusi M5 | 5353 | 46.0% | **−0.115** |
+
+Yang berubah karena pengukuran ini:
+
+- TP1 swing 1.5R mengalahkan 2.5R (varian 2.5R kehilangan ~0.45R/trade); clamp
+  stop swing dipersempit ke [1, 2.5]× ATR H1.
+- Konfluensi kini memakai TF entry sendiri (ATR/RSI/MACD/EMA20/rating), bukan
+  H1 untuk semua gaya — versi lama menilai scalp dengan ATR yang ~4× terlalu besar.
+- Ambang verdict naik ke **6 poin** (dari 3): 63% sinyal lama ada di skor 2–5 dan
+  agregatnya negatif.
+- Grid scalp: clamp [1.5, 4]× ATR M5, `minStop` 1.2.
+
+**Batas kejujuran hasil ini:** scalp hanya positif bila trade diselesaikan dengan
+resolusi **M1 atau lebih halus**. Pada M1 hasilnya +0.03 R/trade (tipis), dan pada
+M5 turun ke −0.12 R/trade karena SL dan TP jatuh di bar yang sama (ambigu hanya
+0.5%, jadi bukan artefak). Artinya parameter scalp yang ada **belum terbukti**
+di luar jendela Agustus–November 2026; perlakukan sebagai eksperimen yang
+diukur, bukan strategi tervalidasi.
+
 ## Catatan
 
 - Sumber candle memakai endpoint internal TradingView yang **tidak resmi** — bisa berubah

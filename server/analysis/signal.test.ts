@@ -33,9 +33,9 @@ assert.equal(swing.basisTf, 'H1');
 assert.equal(scalp.basisTf, 'M5');
 const scalpStop = scalp.stopDistance ?? NaN;
 const swingStop = swing.stopDistance ?? NaN;
-assert.ok(scalpStop >= 0.6 * 2 - 0.01, `scalp stop too tight: ${scalpStop}`);
-assert.ok(scalpStop <= 1.5 * 2 + 0.01, `scalp stop too wide: ${scalpStop}`);
-assert.ok(scalpStop < swingStop / 5, 'scalp stop must be far tighter than swing');
+const [scalpLo, scalpHi] = GRIDS.scalp.grid.clamp;
+assert.ok(scalpStop >= scalpLo * 2 - 0.01, `scalp stop too tight: ${scalpStop}`);
+assert.ok(scalpStop <= scalpHi * 2 + 0.01, `scalp stop too wide: ${scalpStop}`);
 
 // RR is the grid's, and targets follow from it — never a constant 1.5/2.5.
 assert.equal(scalp.rr1, 1);
@@ -50,7 +50,7 @@ assert.ok(scalp.sl! < scalp.entry! && scalp.tp1! > scalp.entry! && scalp.tp2! > 
 // branch is directional, so only the stop/target invariants are comparable).
 const sell = planPrices('SELL', snapshot('M5', 2), bars(), GRIDS.scalp.grid);
 assert.ok(sell.sl! > sell.entry! && sell.tp1! < sell.entry! && sell.tp2! < sell.tp1!);
-assert.ok(sell.stopDistance! >= 0.6 * 2 - 0.01 && sell.stopDistance! <= 1.5 * 2 + 0.01);
+assert.ok(sell.stopDistance! >= scalpLo * 2 - 0.01 && sell.stopDistance! <= scalpHi * 2 + 0.01);
 assert.equal(Number((sell.entry! - sell.tp1!).toFixed(2)), sell.stopDistance);
 
 console.log('signal.test.ts: all assertions passed');
