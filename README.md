@@ -114,48 +114,62 @@ Sumber: feed JSON ForexFactory (gratis). Cakupan default: USD + EUR, GBP, JPY, C
 
 ## Kalibrasi dari data MT5
 
-Grid dan ambang konfluensi diukur, bukan ditebak. Dua sumber data dipakai:
-ekspor broker `XAUUSD.vx` (Jan 2025 – Nov 2026, dengan **spread historis** per
-bar) dan `ticks/` (H1 sejak **2010**, 100k bar, tanpa kolom spread sehingga
-dipakai median 0,30 USD). Sinyal dihitung ulang dari bar seperti engine lalu
-diselesaikan bar-per-bar.
+Sumber validasi utama: **`XAUUSD.txt`** — riwayat M1 tunggal 2003–2026 (8 juta
+bar, satu feed `XAUUSD`, tanpa kolom spread sehingga biaya diperkirakan konstan
+0,30 USD). Semua timeframe engine (M5/M15/H1/H4/D1) diagregasi dari feed yang
+sama, dan setiap sinyal diselesaikan **per menit** (resolusi M1).
 
-| Gaya | Jendela | Sinyal | Win | Net R/trade |
-|---|---|---|---|---|
-| `swing` | 11 tahun (2015–2026), resolusi per era | 7263 | 46.7% | **+0.115** |
-| `swing` | 2022–2026 saja | 3073 | — | +0.21 … +0.36 |
-| `swing` | in-sample (Agu–Nov 2026) | 368 | 53.3% | +0.319 |
-| `scalp` | in-sample, resolusi M1 | 1251 | 53.7% | +0.029 |
-| `scalp` | out-of-sample, resolusi M5 | 5353 | 46.0% | **−0.115** |
+| Gaya | Jendela | Sinyal tertutup | Win | Gross | Biaya | **Net R/trade** |
+|---|---|---|---|---|---|---|
+| `swing` | 2015–2026 | 9.132 | 51.1% | +0.24 | 0.01 | **+0.224** |
+| `scalp` | 2015–2026 | 47.380 | 53.8% | +0.08 | 0.20 | **−0.126** |
 
-Rincian per tahun (net R/trade) — **jendela panjang mengubah kesimpulan**:
+Swing per tahun (net R/trade) — **12 dari 12 tahun positif**:
 
 | 2015 | 2016 | 2017 | 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| −0.04 | −0.10 | −0.09 | −0.02 | +0.05 | +0.12 | +0.07 | +0.31 | +0.16 | +0.19 | +0.36 | +0.28 |
+| +0.26 | +0.08 | +0.16 | +0.18 | +0.14 | +0.17 | +0.17 | +0.39 | +0.36 | +0.19 | +0.39 | +0.21 |
 
-Swing baru menguntungkan sejak 2019 dan jelas positif sejak 2022. Pada 2015–2018
-engine ini **kehilangan** uang; hasil "+0.32" dari jendela 2026 adalah efek
-rezim pasar, bukan bukti strategi tahan segala kondisi.
+Temuan penting dari dua iterasi backtest sebelumnya yang **dikoreksi** oleh
+resolusi M1: klaim lama "2015–2018 negatif" ternyata artefak — era lama
+diselesaikan dengan bar kasar (M5/M15 dari folder `ticks/` yang baru mulai
+2024/2018) sehingga fill dan urutan SL/TP salah ukur. Dengan feed tunggal +
+resolusi M1, semua tahun positif.
 
-Yang berubah karena pengukuran ini:
+Scalp: sinyalnya **tipis-positif secara gross** (+0.08 R/trade, win 53.8%) tapi
+spread 0,30 USD ≈ 0,20 R/trade pada stop M5 yang sempit — biaya memakannya
+seluruhnya. Ambiguitas SL/TP satu-menit hanya 0,04% (swing) / 0,10% (scalp),
+jadi resolusi bukan lagi masalahnya.
 
-- TP1 swing 1.5R mengalahkan 2R dan 2.5R: pada 11 tahun data, 1.5R = **+0.115**
-  sedangkan 2R = **−0.070** R/trade. Clamp stop swing [1, 2.5]× ATR H1.
-- Ambang 6 poin lebih baik dari 4 poin (**+0.115** vs +0.035) dan dari 3 poin.
+Ablasi pada 12 tahun (walk-forward: kesimpulan sama di kedua paruh 2015–2020
+dan 2021–2026):
+
+- **Ambang konfluensi 6 poin** terkonfirmasi: minPts 4 = +0.127 (2016 negatif)
+  vs minPts 6 = +0.224 (12/12 tahun positif).
+- **TP1 1.5R vs 2R tipis-tipisan**: 2R = +0.242, 1.5R = +0.224. Engine mempertahankan
+  1.5R karena tahun terburuknya lebih baik (+0.08 vs +0.05) dan kurva ekuitas
+  lebih halus (win 51% vs 43%); 2R alternatif sah bila target ekspektasi maksimal.
 - Konfluensi memakai TF entry sendiri (ATR/RSI/MACD/EMA20/rating), bukan H1 untuk
   semua gaya — versi lama menilai scalp dengan ATR yang ~4× terlalu besar.
 - Grid scalp: clamp [1.5, 4]× ATR M5, `minStop` 1.2.
+- **Filter biaya scalp** (lewati trade bila spread > 8% jarak SL) mengubah
+  2024–2026 dari ±0.00 menjadi **+0.023** R/trade (2024 +0.01, 2025 +0.02,
+  2026 +0.03), dengan 40% trade lebih sedikit. Positif tapi masih di bawah
+  noise eksekusi nyata (slippage stop/requote) — belum cukup untuk uang sungguhan.
 
 **Batas kejujuran hasil ini:**
 
-- scalp hanya positif bila trade diselesaikan dengan resolusi **M1 atau lebih
-  halus** (+0.03 R/trade, tipis). Pada M5 hasilnya −0.12 R/trade; SL dan TP
-  jatuh di bar yang sama hanya 0.5% kasus, jadi bukan artefak.
-- Backtest scalp 11 tahun **belum bisa diselesaikan**: M5 di `ticks/` baru mulai
-  2024 dan M1 2026, sehingga era sebelum itu tidak punya resolusi memadai.
-  Parameter scalp tetap **eksperimen terukur**, bukan strategi tervalidasi.
-- Hasil swing 2026 (+0.32) tidak boleh diekstrapolasi: 2015–2018 negatif.
+- **Scalp belum layak**: 12 tahun penuh, net −0.126 R/trade (11 dari 12 tahun
+  negatif). Sinyalnya gross-positif tapi terlalu tipis untuk membayar spread
+  pada stop M5. Statusnya tetap **eksperimen**, bukan strategi tervalidasi.
+- Biaya diasumsikan **konstan 0,30 USD** (feed M1 tidak punya kolom spread).
+  Spread realistis melebar saat news dan rollover — angka net bisa lebih buruk.
+- Resolusi M1 masih bar, bukan tick: urutan SL/TP dalam satu menit dihitung
+  konservatif (SL dulu). Dampaknya kecil (≤0,1% trade) tapi bukan nol.
+- Backtest tidak memasukkan slippage/requote broker, gap weekend, dan gate
+  berita (arsip kalender historis tidak tersedia) — hasil live bisa lebih rendah.
+- Pemilihan parameter diuji walk-forward pada dua paruh periode, bukan hanya
+  satu jendela; angka tetap berlaku untuk regime serupa 2015–2026.
 
 ## Catatan
 
