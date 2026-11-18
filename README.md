@@ -114,34 +114,48 @@ Sumber: feed JSON ForexFactory (gratis). Cakupan default: USD + EUR, GBP, JPY, C
 
 ## Kalibrasi dari data MT5
 
-Grid dan ambang konfluensi diukur, bukan ditebak. Backtest memakai ekspor MT5
-`XAUUSD.vx` (H1/H4/M15/M5/M1, Jan 2025 – Nov 2026), sinyal dihitung ulang dari
-bar seperti engine, lalu diselesaikan bar-per-bar dengan **spread historis** dari
-kolom MT5 dibebankan ke setiap trade.
+Grid dan ambang konfluensi diukur, bukan ditebak. Dua sumber data dipakai:
+ekspor broker `XAUUSD.vx` (Jan 2025 – Nov 2026, dengan **spread historis** per
+bar) dan `ticks/` (H1 sejak **2010**, 100k bar, tanpa kolom spread sehingga
+dipakai median 0,30 USD). Sinyal dihitung ulang dari bar seperti engine lalu
+diselesaikan bar-per-bar.
 
 | Gaya | Jendela | Sinyal | Win | Net R/trade |
 |---|---|---|---|---|
-| `swing` | in-sample (Agu–Nov 2026) | 368 | 53.3% | **+0.319** |
-| `swing` | out-of-sample (Jul 2025 – Agu 2026) | 935 | 51.0% | **+0.264** |
+| `swing` | 11 tahun (2015–2026), resolusi per era | 7263 | 46.7% | **+0.115** |
+| `swing` | 2022–2026 saja | 3073 | — | +0.21 … +0.36 |
+| `swing` | in-sample (Agu–Nov 2026) | 368 | 53.3% | +0.319 |
 | `scalp` | in-sample, resolusi M1 | 1251 | 53.7% | +0.029 |
 | `scalp` | out-of-sample, resolusi M5 | 5353 | 46.0% | **−0.115** |
 
+Rincian per tahun (net R/trade) — **jendela panjang mengubah kesimpulan**:
+
+| 2015 | 2016 | 2017 | 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| −0.04 | −0.10 | −0.09 | −0.02 | +0.05 | +0.12 | +0.07 | +0.31 | +0.16 | +0.19 | +0.36 | +0.28 |
+
+Swing baru menguntungkan sejak 2019 dan jelas positif sejak 2022. Pada 2015–2018
+engine ini **kehilangan** uang; hasil "+0.32" dari jendela 2026 adalah efek
+rezim pasar, bukan bukti strategi tahan segala kondisi.
+
 Yang berubah karena pengukuran ini:
 
-- TP1 swing 1.5R mengalahkan 2.5R (varian 2.5R kehilangan ~0.45R/trade); clamp
-  stop swing dipersempit ke [1, 2.5]× ATR H1.
-- Konfluensi kini memakai TF entry sendiri (ATR/RSI/MACD/EMA20/rating), bukan
-  H1 untuk semua gaya — versi lama menilai scalp dengan ATR yang ~4× terlalu besar.
-- Ambang verdict naik ke **6 poin** (dari 3): 63% sinyal lama ada di skor 2–5 dan
-  agregatnya negatif.
+- TP1 swing 1.5R mengalahkan 2R dan 2.5R: pada 11 tahun data, 1.5R = **+0.115**
+  sedangkan 2R = **−0.070** R/trade. Clamp stop swing [1, 2.5]× ATR H1.
+- Ambang 6 poin lebih baik dari 4 poin (**+0.115** vs +0.035) dan dari 3 poin.
+- Konfluensi memakai TF entry sendiri (ATR/RSI/MACD/EMA20/rating), bukan H1 untuk
+  semua gaya — versi lama menilai scalp dengan ATR yang ~4× terlalu besar.
 - Grid scalp: clamp [1.5, 4]× ATR M5, `minStop` 1.2.
 
-**Batas kejujuran hasil ini:** scalp hanya positif bila trade diselesaikan dengan
-resolusi **M1 atau lebih halus**. Pada M1 hasilnya +0.03 R/trade (tipis), dan pada
-M5 turun ke −0.12 R/trade karena SL dan TP jatuh di bar yang sama (ambigu hanya
-0.5%, jadi bukan artefak). Artinya parameter scalp yang ada **belum terbukti**
-di luar jendela Agustus–November 2026; perlakukan sebagai eksperimen yang
-diukur, bukan strategi tervalidasi.
+**Batas kejujuran hasil ini:**
+
+- scalp hanya positif bila trade diselesaikan dengan resolusi **M1 atau lebih
+  halus** (+0.03 R/trade, tipis). Pada M5 hasilnya −0.12 R/trade; SL dan TP
+  jatuh di bar yang sama hanya 0.5% kasus, jadi bukan artefak.
+- Backtest scalp 11 tahun **belum bisa diselesaikan**: M5 di `ticks/` baru mulai
+  2024 dan M1 2026, sehingga era sebelum itu tidak punya resolusi memadai.
+  Parameter scalp tetap **eksperimen terukur**, bukan strategi tervalidasi.
+- Hasil swing 2026 (+0.32) tidak boleh diekstrapolasi: 2015–2018 negatif.
 
 ## Catatan
 
