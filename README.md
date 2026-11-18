@@ -173,6 +173,9 @@ hidup di regime volatilitas tinggi seperti sekarang.
 
 - Validasi scalp 2024–2026 = 3 tahun; di luar itu historisnya merugi. Risiko
   utama bukan parameter, tapi **regime pasar berubah**.
+- **Ukuran posisi (dari statistik drawdown 12 tahun)**: streak kalah terpanjang
+  **35 trade**, max drawdown 492 R. Pada risiko 0,5%/trade itu −17% beruntun —
+  scalp hanya untuk modal yang tahan itu; risiko 1%/trade tidak disarankan.
 - Biaya diasumsikan **konstan 0,30 USD** (feed M1 tidak punya kolom spread).
   Spread realistis melebar saat news dan rollover — angka net bisa lebih buruk.
 - Resolusi M1 masih bar, bukan tick: urutan SL/TP dalam satu menit dihitung
